@@ -1,0 +1,22 @@
+I want to understand the TOTP setup requirement given in the assignment. also what does agent would generate codes means?
+
+---
+
+so whenever a TOTP is required, say for example to login in discord acc which has google authenticator based 2FA, who will provide the code? I asked my agent to log into my discord acc reusing the saved creds
+
+---
+
+how can agents do that? also then what's the point if anybody could access my agent. I'd rather provide the auth code instead.
+
+---
+
+do we have some lib already doing that?
+
+---
+
+yo want to get on the same page about TOTP feature mentioned in here:
+the agent is gonna calculate the auth codes (TOTP) once the setup key for a website it passed to it and would never ask the user for authorization because it has kinda authed him when he provided the setup key. right?
+
+---
+
+this is risky. isn't it? I'd rather let the user pass the TOTPs otherwise what's the point of 2FA
