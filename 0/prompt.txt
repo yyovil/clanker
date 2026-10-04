@@ -1,0 +1,45 @@
+alright tell me where are we on the architecture
+
+---
+
+I talked to an agent on the side chat relatd to the team context stuff. could you update the architecture accordinly?
+
+---
+
+if I'm supposed to understand how we are gonna build yyot v1, what md file should I read?
+
+---
+
+so answer this and I need you to keep the context of all the chats we had in the yyot project till now to answer this question: do we have an agent per user or same agent, diff profile per user?
+
+---
+
+alright why not do something like this: if user wants privacy, he can DM to the agent to keep things pvt and for shared context they call always put in the respective channel instead of having personal channel for each user and then personal hermes instanace for team members.
+
+I want you to extrapolate this in a multi-tenant setting now.
+
+---
+
+alright so each tenant is gonna get a separate instance of hermes or what?
+
+---
+
+why couldn't one agent in multi-tenant could work?
+
+---
+
+alright so the harness details are offloaded by using hermes, it has slack connector already in place so don't gotta do that as well. there's TOTP related work done already, then multitenancy is already taken care of, team shared context and pvt context is already taken care of at the harness level.
+
+what the fuck is we adding then? like are we just hosting hermes and submitting the assignment?
+
+---
+
+browser-use related plugin is also there
+
+---
+
+yeah we just might have to focus on the routing part for the intended behavior. otherwise we are good.
+
+---
+
+I need you to rewrite the [V1_SCOPE.md](V1_SCOPE.md) after this introspection.
