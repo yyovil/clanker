@@ -1,0 +1,59 @@
+alright where we at completing this assignment. today we gotta submit by 11:59PM
+
+---
+
+alright! that's some BS. I want to understand what's up with each area individually. what does the "Slack + model" tells us about?
+
+---
+
+alright what browser provider we have determined to give to hermes for completing open-ended browser tasks E2E successfully and securely?
+
+---
+
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/verification/audit-browser-notes.md (line 7)
+Separate conversation IDs do not separate the local vault; named Browser Use sessions and persistent Camofox identities are also shared within a profile.
+
+## My request:
+what the fuck is camofox?
+
+---
+
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/verification/audit-browser-notes.md (line 7)
+**A single Hermes profile serving two private Slack users and a shared thread does not provide the required private browser/credential ownership boundary.
+
+## My request:
+can we record a yyoreel for this? I'd like to watch a demo for this. spawn a subagent using `gpt-6-luna light` model to record this yyoreel.
+
+---
+
+yo wtf is this. I don't want a fucking presentation man. I'd using something much better than yyoreel for the presentation purpose. what I want is a real reproduction of lack of isolation simply using hermes profile. that's what we are trying to prove right? now get a worker back up on this real quick. no dummy. only real.
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_h6oGByH1UvvVUh74ubBjDhG0\",0]","question":"Which real account/site should we use to demonstrate that a second Hermes conversation can reuse the first conversation’s login? Choose an account you control; we’ll keep credentials off chat and out of the recording.","answer":"you can use both of them slack accounts in clanker. we are gonna need both of them to prove the lack of isolation if the idea to isolate is simply using hermes profiles."}]
+</send_user_message_question_reply>
+
+---
+
+what system error was encountered here?
+
+---
+
+so what now?
+
+---
+
+what you mean by live comparison? I just wanted the fcking yyoreel bro. why is it so fucking hard for you
+
+---
+
+yo??
+
+---
+
+what's up?
