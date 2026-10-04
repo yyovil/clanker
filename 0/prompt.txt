@@ -1,0 +1,21 @@
+yo! lets get bk to building bro. I want to know what's our plan for multi-tenancy. does each user gets its own agent? I think that's sensible and scaleable approach here. also if you look at Instinct, its called a personal assistant and then privacy becomes very important.
+
+---
+
+\\\\
+
+---
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]2]
+
+---
+
+our own access and model-provider access is out of scope for the purpose of this assignment but yeah we can do it in the yyot v2 or some. I don't recollect if we have put this explicitly in the plan proposed. take a look and update it if required.
+
+---
+
+unify both the plans
+
+---
+
+I want to know what that backend authorization service in step 3 in the now section of the process plan will be for.
