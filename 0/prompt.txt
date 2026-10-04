@@ -1,0 +1,14 @@
+yo I'm confused how to read this fking digram in the [V1_SCOPE.md](V1_SCOPE.md) ?
+
+---
+
+what are the things that we need to verify and find out that we might need to implement this ourselves?
+
+---
+
+alright so what strategy we can use here to verify all these points?&#x20;
+
+1. one way could be we start building towards the experience we intend to (we can keep this in some md file and then keep referring it back and finding out the gaps in between what's intended and what's possible right now using just hermes off the shelf and closing the gap on the way by writing code for it).
+2. another way could be we can draw the inferences first of all by thoroughly looking at the docs and the hermes source code. also hermes community could also help here.
+
+do you got something else?
