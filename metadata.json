@@ -1,0 +1,44 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "01M43JF5Q6Z07060WJ1QZH9HBB",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 11,
+  "files_touched": [
+    ".gitignore",
+    ".local/hermes-lab/home/config.yaml",
+    "HERMES_VERIFICATION_REVIEW.md",
+    "V1_SCOPE.md",
+    "VERIFICATION_STRATEGY.md",
+    "scripts/hermes-lab",
+    "verification/LOCAL_BASELINE.md",
+    "verification/MODEL_SMOKE.md",
+    "verification/RUNTIME_SETUP.md",
+    "verification/SCENARIO_V1.md",
+    "verification/SLACK_SETUP.md",
+    "verification/evidence/2026-10-03-model-61-smoke.md",
+    "verification/evidence/2026-10-03-model-slack-smoke.md",
+    "verification/evidence/2026-10-03-routing-smoke.txt",
+    "verification/evidence/2026-10-03-second-slack-user.md",
+    "verification/evidence/2026-10-03-slack-connectivity.md",
+    "verification/hermes/baseline.json",
+    "verification/hermes/config.yaml",
+    "verification/slack-app-manifest.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 687424,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 48237568,
+    "output_tokens": 94008,
+    "api_call_count": 359
+  }
+}

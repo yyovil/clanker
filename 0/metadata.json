@@ -1,0 +1,168 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "01M43JF5Q6Z07060WJ1QZH9HBB",
+  "session_id": "01a0febe-b207-7331-82cf-d30c55f89af9",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-04T13:43:22.686749Z",
+  "branch": "main",
+  "checkpoints_count": 11,
+  "save_step_count": 4,
+  "files_touched": [
+    ".gitignore",
+    ".local/hermes-lab/home/config.yaml",
+    "HERMES_VERIFICATION_REVIEW.md",
+    "V1_SCOPE.md",
+    "VERIFICATION_STRATEGY.md",
+    "scripts/hermes-lab",
+    "verification/LOCAL_BASELINE.md",
+    "verification/MODEL_SMOKE.md",
+    "verification/RUNTIME_SETUP.md",
+    "verification/SCENARIO_V1.md",
+    "verification/SLACK_SETUP.md",
+    "verification/evidence/2026-10-03-model-61-smoke.md",
+    "verification/evidence/2026-10-03-model-slack-smoke.md",
+    "verification/evidence/2026-10-03-routing-smoke.txt",
+    "verification/evidence/2026-10-03-second-slack-user.md",
+    "verification/evidence/2026-10-03-slack-connectivity.md",
+    "verification/hermes/baseline.json",
+    "verification/hermes/config.yaml",
+    "verification/slack-app-manifest.json"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "6ba72873d319",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 687424,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 48237568,
+    "output_tokens": 94008,
+    "api_call_count": 359
+  },
+  "session_metrics": {
+    "turn_count": 11
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-04T13:43:22.161498Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 245,
+    "human_removed": 1001,
+    "total_committed": 733,
+    "total_lines_changed": 1246,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 210,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "V1_SCOPE.md": 123,
+        "VERIFICATION_STRATEGY.md": 87
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 305,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".gitignore": 1
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 95,
+      "user_lines_removed": 11,
+      "agent_lines_added": 1670,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "V1_SCOPE.md": 1,
+        "VERIFICATION_STRATEGY.md": 2,
+        "verification/DISCOVERY_WALKTHROUGH.md": 24,
+        "verification/LOCAL_BASELINE.md": 2,
+        "verification/MODEL_SMOKE.md": 57,
+        "verification/SCENARIO_V1.md": 1,
+        "verification/SLACK_SETUP.md": 8
+      },
+      "user_removed_per_file": {
+        "V1_SCOPE.md": 1,
+        "VERIFICATION_STRATEGY.md": 2,
+        "verification/LOCAL_BASELINE.md": 2,
+        "verification/SCENARIO_V1.md": 1,
+        "verification/SLACK_SETUP.md": 5
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 119,
+      "user_lines_removed": 27,
+      "agent_lines_added": 1943,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "V1_SCOPE.md": 1,
+        "VERIFICATION_STRATEGY.md": 5,
+        "verification/LOCAL_BASELINE.md": 5,
+        "verification/MODEL_SMOKE.md": 31,
+        "verification/SCENARIO_V1.md": 1,
+        "verification/SLACK_SETUP.md": 10,
+        "verification/audit-execution-notes.md": 1,
+        "verification/evidence/2026-10-03-model-61-smoke.md": 62,
+        "verification/probes/browser_vault_ownership.py": 1,
+        "verification/probes/execution_boundary_probe.py": 1,
+        "verification/probes/execution_policy_probe.py": 1
+      },
+      "user_removed_per_file": {
+        "V1_SCOPE.md": 1,
+        "VERIFICATION_STRATEGY.md": 3,
+        "verification/LOCAL_BASELINE.md": 3,
+        "verification/MODEL_SMOKE.md": 8,
+        "verification/SCENARIO_V1.md": 1,
+        "verification/SLACK_SETUP.md": 7,
+        "verification/audit-execution-notes.md": 1,
+        "verification/probes/browser_vault_ownership.py": 1,
+        "verification/probes/execution_boundary_probe.py": 1,
+        "verification/probes/execution_policy_probe.py": 1
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 63,
+      "user_lines_removed": 29,
+      "agent_lines_added": 2048,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "V1_SCOPE.md": 1,
+        "VERIFICATION_STRATEGY.md": 7,
+        "verification/DISCOVERY_WALKTHROUGH.md": 1,
+        "verification/LOCAL_BASELINE.md": 5,
+        "verification/MODEL_SMOKE.md": 34,
+        "verification/SCENARIO_V1.md": 1,
+        "verification/SLACK_SETUP.md": 10,
+        "verification/audit-execution-notes.md": 1,
+        "verification/probes/browser_vault_ownership.py": 1,
+        "verification/probes/execution_boundary_probe.py": 1,
+        "verification/probes/execution_policy_probe.py": 1
+      },
+      "user_removed_per_file": {
+        "V1_SCOPE.md": 1,
+        "VERIFICATION_STRATEGY.md": 3,
+        "verification/DISCOVERY_WALKTHROUGH.md": 1,
+        "verification/LOCAL_BASELINE.md": 3,
+        "verification/MODEL_SMOKE.md": 9,
+        "verification/SCENARIO_V1.md": 1,
+        "verification/SLACK_SETUP.md": 7,
+        "verification/audit-execution-notes.md": 1,
+        "verification/probes/browser_vault_ownership.py": 1,
+        "verification/probes/execution_boundary_probe.py": 1,
+        "verification/probes/execution_policy_probe.py": 1
+      }
+    }
+  ]
+}
