@@ -1,0 +1,15 @@
+where the fuck my codex thread where I was pushing back the designed architecture for clanker went?
+
+---
+
+no that's not it.
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_ci6umM2ZZ06uDAAc0uxKmb31\",0]","question":"What’s one phrase or architecture decision you remember pushing back on in that chat?","answer":"scalable"}]
+</send_user_message_question_reply>
+
+---
+
+open it again
