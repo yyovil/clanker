@@ -1,0 +1,9 @@
+what does the deployment thing contains in it? because the POC doesn't need deployment so we can get rid of that. lmk
+
+---
+
+what does the runtime dir contains?
+
+---
+
+what's this @patches/ is for then?
