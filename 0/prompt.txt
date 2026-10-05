@@ -1,0 +1,11 @@
+where's hermes's src code in this repo?
+
+---
+
+because we are modding it, we shouldn't put it in the `.gitignore` file
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_2OugoZkpYeVjc96iZ1UkEpuD\",0]","question":"Should Hermes modifications be versioned directly in yyot, or in a separate Hermes fork/submodule?","answer":"Directly in yyot (recommended)"}]
+</send_user_message_question_reply>
