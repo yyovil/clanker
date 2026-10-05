@@ -1,0 +1,59 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "01M463Q34SHAK43TCBK2C1ZNE0",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 28,
+  "files_touched": [
+    ".gitignore",
+    "HERMES_VERIFICATION_REVIEW.md",
+    "V1_SCOPE.md",
+    "VERIFICATION_STRATEGY.md",
+    "scripts/hermes-lab",
+    "verification/DISCOVERY_WALKTHROUGH.md",
+    "verification/ISOLATION_SOURCE_AUDIT.md",
+    "verification/LOCAL_BASELINE.md",
+    "verification/MODEL_SMOKE.md",
+    "verification/RUNTIME_SETUP.md",
+    "verification/SCENARIO_V1.md",
+    "verification/SLACK_SETUP.md",
+    "verification/audit-browser-notes.md",
+    "verification/audit-execution-notes.md",
+    "verification/audit-slack-notes.md",
+    "verification/clanker-architecture-updated.png",
+    "verification/evidence/2026-10-03-execution-boundary-probes.txt",
+    "verification/evidence/2026-10-03-model-61-smoke.md",
+    "verification/evidence/2026-10-03-model-slack-smoke.md",
+    "verification/evidence/2026-10-03-profile-boundary-probes.txt",
+    "verification/evidence/2026-10-03-routing-smoke.txt",
+    "verification/evidence/2026-10-03-second-slack-user.md",
+    "verification/evidence/2026-10-03-slack-audit-tests.txt",
+    "verification/evidence/2026-10-03-slack-boundary-probe.json",
+    "verification/evidence/2026-10-03-slack-connectivity.md",
+    "verification/evidence/browser_vault_ownership.json",
+    "verification/hermes/baseline.json",
+    "verification/hermes/config.yaml",
+    "verification/probes/browser_vault_ownership.py",
+    "verification/probes/execution_boundary_probe.py",
+    "verification/probes/execution_policy_probe.py",
+    "verification/probes/slack_boundary_probe.py",
+    "verification/probes/test_profile_boundary.py",
+    "verification/slack-app-manifest.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 633872,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 22460032,
+    "output_tokens": 62691,
+    "api_call_count": 206
+  }
+}
