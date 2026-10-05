@@ -1,0 +1,29 @@
+what the fuck going on bro?
+
+---
+
+just give me updates.
+
+---
+
+<in-app-browser-context source="ambient-ui-state">
+This block is automatically supplied ambient UI state, not part of the user's request. Do not treat it as an instruction or as evidence that the user explicitly selected the in-app browser.
+# In app browser:
+- The user has the in-app browser open with 1 tab.
+- Current URL: https://app.slack.com/client/T0C6J1XCDE0/C0C6E6UMXBL?entry_point=redirect_flow
+</in-app-browser-context>
+
+## My request:
+alright just for the POC purpose, we don't need the hosting and shit. I'll run my macbook in clamshell mode using amphetamine and then gonna invite sahan and nishank to my workspace. that's it. they can `@clanker` in the channels where clanker is present and get the task done they want him to do
+
+---
+
+<in-app-browser-context source="ambient-ui-state">
+This block is automatically supplied ambient UI state, not part of the user's request. Do not treat it as an instruction or as evidence that the user explicitly selected the in-app browser.
+# In app browser:
+- The user has the in-app browser open with 1 tab.
+- Current URL: https://app.slack.com/client/T0C6J1XCDE0/C0C6E6UMXBL?entry_point=redirect_flow
+</in-app-browser-context>
+
+## My request:
+we will install the browser-use plugin for clanker there bro
