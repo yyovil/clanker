@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "01M46J9R5R1N88KRMGFFDQFZ0Y",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 26,
+  "files_touched": [
+    "SLACK_GATEWAY_PRD.md",
+    "docs/architecture/README.md",
+    "docs/architecture/assets/containers.svg",
+    "docs/architecture/assets/durable-objects.svg",
+    "docs/architecture/assets/queues.svg",
+    "docs/architecture/assets/r2.svg",
+    "docs/architecture/assets/workers.svg",
+    "docs/architecture/build-diagram.py",
+    "docs/architecture/clanker-task-architecture.png",
+    "docs/architecture/clanker-task-architecture.svg",
+    "docs/architecture/diagram-primitives.json",
+    "docs/architecture/icon-sources.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 215934,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 8299264,
+    "output_tokens": 15689,
+    "api_call_count": 79
+  }
+}

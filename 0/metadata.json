@@ -1,0 +1,116 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "01M46J9R5R1N88KRMGFFDQFZ0Y",
+  "session_id": "01a1069b-c441-7b13-a5cb-445785f8ac16",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-05T17:38:04.416941Z",
+  "branch": "main",
+  "checkpoints_count": 26,
+  "save_step_count": 2,
+  "files_touched": [
+    "SLACK_GATEWAY_PRD.md",
+    "docs/architecture/README.md",
+    "docs/architecture/assets/containers.svg",
+    "docs/architecture/assets/durable-objects.svg",
+    "docs/architecture/assets/queues.svg",
+    "docs/architecture/assets/r2.svg",
+    "docs/architecture/assets/workers.svg",
+    "docs/architecture/build-diagram.py",
+    "docs/architecture/clanker-task-architecture.png",
+    "docs/architecture/clanker-task-architecture.svg",
+    "docs/architecture/diagram-primitives.json",
+    "docs/architecture/icon-sources.json"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6.1-sol",
+  "turn_id": "9e14af29e22b",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 215934,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 8299264,
+    "output_tokens": 15689,
+    "api_call_count": 79
+  },
+  "session_metrics": {
+    "turn_count": 26
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-05T17:38:04.222331Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 1409,
+    "total_committed": 1409,
+    "total_lines_changed": 1409,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 2504,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/settings.json": 7,
+        ".gitignore": 1,
+        "HERMES_VERIFICATION_REVIEW.md": 95,
+        "MOD_HERMES.md": 368,
+        "V1_SCOPE.md": 168,
+        "VERIFICATION_STRATEGY.md": 91,
+        "scripts/hermes-lab": 42,
+        "verification/DISCOVERY_WALKTHROUGH.md": 26,
+        "verification/ISOLATION_SOURCE_AUDIT.md": 151,
+        "verification/LOCAL_BASELINE.md": 90,
+        "verification/MODEL_SMOKE.md": 135,
+        "verification/RUNTIME_SETUP.md": 74,
+        "verification/SCENARIO_V1.md": 30,
+        "verification/SLACK_SETUP.md": 117,
+        "verification/audit-browser-notes.md": 86,
+        "verification/audit-execution-notes.md": 132,
+        "verification/audit-slack-notes.md": 101,
+        "verification/evidence/2026-10-03-execution-boundary-probes.txt": 24,
+        "verification/evidence/2026-10-03-model-61-smoke.md": 78,
+        "verification/evidence/2026-10-03-model-slack-smoke.md": 65,
+        "verification/evidence/2026-10-03-profile-boundary-probes.txt": 19,
+        "verification/evidence/2026-10-03-routing-smoke.txt": 23,
+        "verification/evidence/2026-10-03-second-slack-user.md": 27,
+        "verification/evidence/2026-10-03-slack-audit-tests.txt": 35,
+        "verification/evidence/2026-10-03-slack-boundary-probe.json": 12,
+        "verification/evidence/2026-10-03-slack-connectivity.md": 33,
+        "verification/evidence/browser_vault_ownership.json": 22,
+        "verification/hermes/baseline.json": 23,
+        "verification/hermes/config.yaml": 6,
+        "verification/probes/browser_vault_ownership.py": 110,
+        "verification/probes/execution_boundary_probe.py": 28,
+        "verification/probes/execution_policy_probe.py": 18,
+        "verification/probes/slack_boundary_probe.py": 43,
+        "verification/probes/test_profile_boundary.py": 134,
+        "verification/slack-app-manifest.json": 90
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 7,
+      "user_lines_removed": 0,
+      "agent_lines_added": 2673,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/settings.json": 7
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 7,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3904,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/settings.json": 7
+      }
+    }
+  ]
+}
