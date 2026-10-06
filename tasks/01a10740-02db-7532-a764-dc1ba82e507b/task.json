@@ -1,0 +1,12 @@
+{
+  "tool_use_id": "01a10740-02db-7532-a764-dc1ba82e507b",
+  "agent_id": "01a10740-02db-7532-a764-dc1ba82e507b",
+  "subagent_type": "default",
+  "files": [
+    "verification/evidence/2026-10-04-control-preparation.json",
+    "verification/probes/browser_resource_probe-results.json",
+    "verification/probes/browser_resource_probe.md"
+  ],
+  "started_at": "2026-10-04T19:45:50.869612+05:30",
+  "completed_at": "2026-10-04T19:45:50.882025+05:30"
+}
