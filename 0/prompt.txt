@@ -1,0 +1,99 @@
+Is there anything left in V1 Scope.md file for verification? If yes, research thoroughly first of all by referring to Hermes docs.
+
+---
+
+so our strategy is to assert these specific behaviors first, then do E2E testing first and finally code the gap out?
+
+---
+
+should we do that locally first or with the deployed version of hermes? state your reasons?
+
+---
+
+should we do that locally first or with the deployed version of hermes? state your reasons.
+
+---
+
+alright lets do it then. we are gonna fork and clone hermes src code or just get started with the one off the shelf?
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_9840af0835614fb287eaca40897d43a7\",0]","question":"Do you already have a dedicated Slack app and demo workspace for yyot? If yes, share the setup file location or workspace/user/channel IDs, but keep tokens out of chat.","answer":"No I don't also don't name it yyot. rename everything in this project except the dirname from yyot to clanker"}]
+</send_user_message_question_reply>
+
+---
+
+couldn't you use the CUA to do that for me? I just want to authorize where my creds are used.
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_btkkZfv5lPXDSgug0acaAnlM\",0]","question":"Slack says continuing accepts its Main Services Agreement, User Terms of Service and Supplemental Terms. May I accept those terms and proceed with Google sign-in for the clanker test workspace?","answer":"Yes, accept and use Google sign-in"}]
+</send_user_message_question_reply>
+
+---
+
+approved
+
+---
+
+hold on! how do I do that?
+
+---
+
+continue
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_BpDLSbYOoZkpzJDYYMQ51oHo\",0]","question":"May I use the same Google account (tanishq.research@gmail.com) to authorize a fresh ChatGPT/Codex session for local clanker? Hermes would save its access/refresh tokens in `.local/hermes-lab/home/auth.json` and send test prompts to OpenAI using that account’s plan quota. Existing Codex credentials would not be imported.","answer":"Use a different ChatGPT account"}]
+</send_user_message_question_reply>
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_qBazizkyZz0sQpSZqIec0EOQ\",0]","question":"What email and sign-in method (Google, Apple, Microsoft, or email) should I use for the other ChatGPT account? Share only the email and method, not a password or verification code.","answer":"I've the acc logged into my aside browser."}]
+</send_user_message_question_reply>
+
+---
+
+where's the device code?
+
+---
+
+done
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"REDACTED\",0]","question":"Which email should I invite to the clanker Slack workspace as the second test user? Use another account you control; this is needed to test private DMs and shared threads across two identities. I’ll send the Slack workspace invitation to that address.","answer":"use tanishq231003@gmail.com"}]
+</send_user_message_question_reply>
+
+---
+
+use my aside browser to accept the invitation there
+
+---
+
+and use gpt-6.1-sol model in hermes
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_5VkrE8C7YWnPNDExE1EGOEFb\",0]","question":"Slack’s join page says continuing accepts its User Terms of Service for tanishq231003@gmail.com. May I accept those terms and use Google sign-in to finish joining clanker with this second account?","answer":"Accept terms and continue with Google"}]
+</send_user_message_question_reply>
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_90a745bbcc27482ebbfc79ed2c8ff332\",0]","question":"Google is asking you to verify tanishq231003@gmail.com with a passkey. Complete the passkey or Touch ID prompt in Aside, then reply “done.” Keep passwords and verification codes out of chat.","answer":"done"}]
+</send_user_message_question_reply>
+
+---
+
+how much do you need?
+
+---
+
+yo why do you need this much space bro?
