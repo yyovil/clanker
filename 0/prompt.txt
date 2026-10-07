@@ -1,0 +1,11 @@
+does clanker responds to edited message? basically what I want is clanker stops responding to the older message and only respond to the edited message.
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_YzW0Va0TkzPBM26fmd0p0tEx\",0]","question":"If you edit a message after Clanker has already finished replying, should it answer again?","answer":"both. so if clanker shows \"clanker is working...\". stop working on the prev task and only work on the edited task. because that's what makes sense here to me. right? if it has already replied to the unedited message, then start working on the edited task and edit the prev response. doesn't that makes so much sense/"}]
+</send_user_message_question_reply>
+
+---
+
+restart and check if the vault pages are also up after a restart? also let me know if the vault page links (powered by cf tunnels) are affected by gateway restarted or not?
