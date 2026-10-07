@@ -1,0 +1,17 @@
+I want to design clanker's lettermark using retro space font.
+
+---
+
+do you have access to the retro_space font from my sys?
+
+---
+
+now recreate "clanker" lettermark in lg canvas real quick for preview.
+
+---
+
+looks awesome not gon lie. lets use it across the vault pages real quick
+
+---
+
+I don't want the "vault" text besides the lettermark. also the selected text element is unnecessary. rm that shit too.
