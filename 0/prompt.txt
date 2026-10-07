@@ -1,0 +1,34 @@
+I want to understand the reason of moving the secure login link to DMs from shared slack channel.
+
+---
+
+hold on! I thought only logging in is moved to the DMs for security purpose. I didn't knew he won't be able to tell clanker to complete the browsing tasks that will need the relevant acc creds to complete them
+
+---
+
+yeah. how to mk that possible?
+
+---
+
+so essentially the task for the backend is to remember where did the detour (continuing login privately in the DMs) takes place. so it has to remember, what user, what workspace, what channel, what thread. do I understand it right?
+
+---
+
+remembering the task is gonna be inmemory or persistent using sqlite?
+
+---
+
+alright. final thing (related to the 5th point) before I approve this thing: 
+user would only be able to read the thread contents and clankers response. right?
+
+---
+
+alright now lets implement this.
+
+---
+
+restart.
+
+---
+
+respond with the absolute path for clanker's data dir
