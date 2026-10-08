@@ -1,0 +1,9 @@
+when I invite my slack collegue to my vault, how's he notified?
+
+---
+
+through the slack notifications?
+
+---
+
+can we do slack notifications?
