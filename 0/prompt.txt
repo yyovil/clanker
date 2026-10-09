@@ -1,0 +1,9 @@
+I want to understand how we are keeping the credentials safe in plain english but yeah intended for a CS student
+
+---
+
+Now let's begin it. Like I asked Clanker to log into my Gmail. So how is it gonna, like, work out? Like, okay, hold on. I asked Clanker to log into my email account. Then what? What the interaction is gonna look like in this case, using the mechanism we have got in place first of all.
+
+---
+
+So how do we get to know, like exactly what credentials are, like is Google asking us?
