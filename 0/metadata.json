@@ -1,0 +1,80 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "01M4H6NDZ7E2E5K3VH0R1KH5BY",
+  "session_id": "01a118a7-16a7-7353-8e7f-67dcda2b2b23",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-09T20:49:27.242152Z",
+  "branch": "main",
+  "checkpoints_count": 34,
+  "save_step_count": 1,
+  "files_touched": [
+    ".gitignore",
+    "docs/CLANKER_BENCHMARK.md",
+    "docs/KERNEL_TRIAL.md",
+    "scripts/kernel-hermes-trial",
+    "scripts/kernel_trial.py"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6.1-sol",
+  "turn_id": "95202688ab79",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 4060059,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 233645056,
+    "output_tokens": 670087,
+    "api_call_count": 584
+  },
+  "session_metrics": {
+    "turn_count": 34
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-09T20:49:21.334028Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 13,
+    "human_removed": 548,
+    "total_committed": 144,
+    "total_lines_changed": 561,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 1095,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".gitignore": 3,
+        "docs/KERNEL_TRIAL.md": 87,
+        "scripts/kernel-hermes-trial": 40,
+        "scripts/kernel_trial.py": 118,
+        "smoke_loop/README.md": 128,
+        "smoke_loop/__init__.py": 1,
+        "smoke_loop/example/probe.py": 10,
+        "smoke_loop/example/subject.py": 5,
+        "smoke_loop/example/suite.json": 13,
+        "smoke_loop/hermes_plugin/__init__.py": 100,
+        "smoke_loop/hermes_plugin/plugin.yaml": 6,
+        "smoke_loop/runner.py": 372,
+        "smoke_loop/tests/test_loop.py": 212
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 13,
+      "user_lines_removed": 156,
+      "agent_lines_added": 405,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "docs/CLANKER_BENCHMARK.md": 13
+      },
+      "user_removed_per_file": {
+        "docs/CLANKER_BENCHMARK.md": 156
+      }
+    }
+  ]
+}
