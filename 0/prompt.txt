@@ -1,0 +1,17 @@
+how many hermes profiles do we have got rn? I heard we have 23 some hermes profiles when the clanker workspace only has 3 members in it
+
+---
+
+bro so this is concerning. why do we need a profile for slack channel profiles?
+
+---
+
+also separate profiles created for channel tasks for what?
+
+---
+
+so the agent wouldn't have context cross channel then. can we counter that by having a one profile for the workspace instead? can we do that?
+
+---
+
+whats that recall mechanism?
