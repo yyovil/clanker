@@ -1,0 +1,45 @@
+can you clear my DMs with clanker using the slack cli?
+
+---
+
+yyovil's DM to clanker
+
+---
+
+clear all 313
+
+---
+
+I just clicked on the filtered select item
+
+---
+
+doen
+
+---
+
+how can I use the slack cli to read a DM thread from clanker to provide context to the agent about what to fix next? also I have to tell the agent to use a specific slack acc since I've got 2 logged in simultaneously
+
+---
+
+what's the user id for Tanishq Palandurkar
+
+---
+
+plz rewrite the prompt
+
+---
+
+you didn't put the clanker id
+
+---
+
+I don't want to copy the prompt repeatedly. create a skill that contains 2 profiles identified using the username: yyovil | tanishq and the slack thread to take as the context to debug followed the by the issue
+
+---
+
+use the [$skill-creator](/Users/tanishqpalandurkar/.codex/skills/.system/skill-creator/SKILL.md)
+
+---
+
+to fetch the logs for the corresponding browser actions performed by clanker, instruct agent to use the kernel cli
