@@ -1,0 +1,39 @@
+I want to understand how the fuck did I exhausted all $5 credits in a day bro
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_90df062a75e745d69e82b823397ab41d\",0]","question":"Which service’s $5 credits ran out: OpenRouter for Clanker, OpenAI API, Codex, or something else?","answer":"kernel"}]
+</send_user_message_question_reply>
+
+---
+
+we aren't getting the live preview of the browser in slack anyways so what we can do for cost effectiveness?
+
+---
+
+what are the cons of using the browser in headless mode?
+
+---
+
+could you tell me when I'd be billed next time?
+
+---
+
+I just put in my card details and set the max spending limit to $10
+
+---
+
+I just do not know when I'll be charged btw
+
+---
+
+I want you to refer to Kernel.sh documentation and tell me how I can save on costs if I'm not using live preview. Does it make any difference? Does it make any difference to use the browser in headful or headless mode? If all I want to do is build browser agent, that is what Clanker is actually.
+
+---
+
+look at my current usage and tell me if I can work exactly the same with headless mode as well. use the platform data from kernel.sh
+
+---
+
+I need you to use the kernel cli and read the logs to understand if we really need the headful or headless kernel browser here
