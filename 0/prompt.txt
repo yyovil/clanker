@@ -1,0 +1,11 @@
+[$slack-debug](/Users/tanishqpalandurkar/.codex/skills/slack-debug/SKILL.md) tanishq [https://clanker-global.slack.com/archives/D0C6EAXPKEE/p1791558215514149](https://clanker-global.slack.com/archives/D0C6EAXPKEE/p1791558215514149) why it can't proceed payment here?
+
+---
+
+the error occured exactly at what layer? clanker harness level or from upstream kernel ?
+
+---
+
+we use this details for what purpose? first of all we shouldn't collect this. this is very brittle. regexing the page I don't want to do this. second just give the users card to enter the card details with an option to remember the card, if the card is card is remember, you can use it without user's authorization next time to mk the payment. just "proceed to payment" should be enough from the user side. otherwise present the "pay X" card every time required.
+
+don't mention the payment receipt in the page.
