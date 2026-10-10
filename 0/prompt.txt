@@ -1,0 +1,1 @@
+can we access audit logs through kernel cli?
