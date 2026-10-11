@@ -1,0 +1,1 @@
+how does [$clanker-qa](/Users/tanishqpalandurkar/.codex/skills/clanker-qa/SKILL.md) works? I gotta run the benchmark and consolidate the capability in the readme.
