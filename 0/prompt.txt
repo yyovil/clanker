@@ -1,0 +1,86 @@
+I've understood that clanker can't pay for Indian users using their card even with kernel as the provider in the wallet. it could enroll but the card network won't issue the agentic network token for our bank: SBI in our case. so Indian users won't be able to successfully use clanker and do the payments for now. also we can't have a custom vault provider and 1password's vault isn't for storing card details. I'm still not clear why we can't use agentcard and link by stripe requires US/CA number so we can't do that as well. only thing that's left exploring is agentcard thing
+
+---
+
+oh hold on! I got it now. I can't use agentcard because the way it works in kernel agent browser is that it will intercept the payment request at browser egress and agentcard only works for specific payment processors. like it doesn't work with juspay rn and then it would be a problem to not being able to pay to merchants using juspay as payment processor on their websites like zepto.
+
+---
+
+so we are gonna simply tell Sahan and Nishank that payments is currently a limitation. mention this in the relevant md file real quick and leave the code as it is.
+
+---
+
+also I want you to update the bench we have created
+
+---
+
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/docs/CLANKER_BENCHMARK.md (line 20)
+Can you currently pay for my Zepto cart using my saved SBI card? Just explain the limitation; don’t submit a payment or place the order.
+
+## My request:
+what's even the point of having this here bro?
+
+---
+
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/docs/CLANKER_BENCHMARK.md (line 15)
+Don’t place the order. | 
+
+## My request:
+don't put this
+
+---
+
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/docs/CLANKER_BENCHMARK.md (line 16)
+and don’t place the order.
+
+## My request:
+this is so unecessary
+
+---
+
+so the way that I wanted to do this is that the agent auto-generates the authentication codes or TOTP here after it has my authenticator setup key. that's it. I don't want to supply the key to him.
+
+---
+
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/docs/CLANKER_BENCHMARK.md (line 19)
+ Don’t book anything.
+
+## My request:
+remove such mentions of not booking, paying etc. because they cause unecessary noise in the interaction during the demo.
+
+---
+
+did you also improved the followups for those initial user messages that you are gonna pass asa the prompt?
+
+---
+
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/docs/CLANKER_BENCHMARK.md (lines 3-18)
+**Payment scope for the Sahan and Nishank review (2026-10-10):** payments are a
+current POC limitation. Shopping cases are evaluated through cart preparation,
+delivery details and final-total review, stopping before payment or order
+placement. A successful paid order is outside the current benchmark scope.
+See [payment limitations](ACCESS_MANAGEMENT.md) for the SBI network-token blocker
+and Agentcard/Juspay checkout coverage limits.
+
+The GitHub case assumes a securely saved login and authenticator setup key.
+The expected behavior is to generate and use the current TOTP from that key
+without asking the user for a code or exposing the key in chat. This remains
+unverified through the current Managed Auth integration, which bypasses the
+legacy Vault TOTP handler.
+
+Send follow-ups as separate messages after Clanker responds. Unless labeled
+otherwise, they come from the initial requester. Speaker labels are benchmark
+directions, not part of the message text.
+
+## My request:
+why you have mentioned all this bro
