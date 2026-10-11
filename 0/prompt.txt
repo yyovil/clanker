@@ -1,0 +1,5 @@
+restart clanker's gateway and mk sure the tunnel is up as well
+
+---
+
+can I get to know if those 4 active connections are mine or what?
