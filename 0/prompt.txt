@@ -1,0 +1,1 @@
+and this could be ran headless without needing browser right? browser is only needed for login and human in the loop stuff right?
