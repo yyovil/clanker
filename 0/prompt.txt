@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"REDACTED\",0]","question":"May I reload the local Slack gateway after its current task finishes to activate the tested card flow? It currently reports one active task; the reload is required to load the new payment tools and approval handlers.","answer":"I've got many questions related to the card vault page."}]
+</send_user_message_question_reply>
