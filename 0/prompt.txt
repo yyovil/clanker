@@ -1,0 +1,8 @@
+we have demoes, runnable repo, deployed reviewer experience. we just need to polish the last point i.e. access management and known limits note. 
+
+lets do known limits in a diff md file pointwise.
+
+1. I know that clanker can't do payments online right now. so that's one.
+2. second is coworking experience involving sharing crendential access with the team members in the slack workspace and admin control is very brittle right now UX wise.
+3. the response style of clanker is also not to the point I want UX wise.
+these are the limits I could tell right now
