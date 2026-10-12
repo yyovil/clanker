@@ -1,0 +1,1 @@
+show me the home vault page first of all. also mention what other pages/routes do we have in the vault web page
