@@ -1,0 +1,19 @@
+explain the standby mode in browser
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_5P5wolXLcSrbIjphx9CcF1rq\",0]","question":"Which browser’s standby mode do you mean?","answer":"Kernel cloud browser used by Clanker"}]
+</send_user_message_question_reply>
+
+---
+
+does kernel has a concept of snapshots so that we can reuse the login cookies etc
+
+---
+
+are we using per user browser profiles or not? use kernel cli to find out
+
+---
+
+I saw we only have 3 users and > 3 browser profiles. why? ok we should hv atmost 4 because we have shared the swiggy creds in between 2 users so 4 browser profiles and 4 corresponding vault mks sense but these many browser profiles? why?
