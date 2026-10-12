@@ -1,0 +1,1 @@
+what the fuck is config registry in kernel?
