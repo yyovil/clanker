@@ -1,0 +1,1 @@
+what are things under the .local dir? I've to prepare the local project to upload on gh
