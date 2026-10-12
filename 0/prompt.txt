@@ -1,0 +1,1 @@
+we need to measure how time does it take to generate a 5s greeting using heygen's digital twin integration.
