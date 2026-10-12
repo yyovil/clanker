@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_9cbab02d70104f45aaa776987ab14d02\",0]","question":"Clanker has no active tasks right now. May I restart its live gateway to load the native payment flow, then prepare the Zepto test? Your saved preference requires approval before live gateway changes; the purchase itself will still require your private Pay approval.","answer":"just restart"}]
+</send_user_message_question_reply>
