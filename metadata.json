@@ -3,11 +3,14 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 69,
+  "checkpoints_count": 75,
   "files_touched": [
     ".gitignore",
+    "README.md",
+    "docs/SETUP.md",
     "docs/decisions/2026-10-05-composio-browser-vault.md",
     "docs/decisions/2026-10-05-hosted-credential-flow.md",
+    "docs/decisions/2026-10-06-channel-login-detour.md",
     "docs/decisions/2026-10-06-payment-vault.md",
     "docs/decisions/2026-10-06-slack-task-acknowledgement.md",
     "docs/decisions/2026-10-06-vault-invitations.md",
@@ -183,6 +186,7 @@
     "hermes/agent/fallback_cooldown.py",
     "hermes/agent/fast_mode.py",
     "hermes/agent/file_safety.py",
+    "hermes/agent/gateway_context.py",
     "hermes/agent/gemini_native_adapter.py",
     "hermes/agent/gemini_schema.py",
     "hermes/agent/history_commentary.py",
@@ -9820,6 +9824,7 @@
     "hermes/tests/gateway/test_internal_notification_marker.py",
     "hermes/tests/gateway/test_interrupt_keeps_parked_internal_wake.py",
     "hermes/tests/gateway/test_irc_adapter.py",
+    "hermes/tests/gateway/test_isolated_gateway_task.py",
     "hermes/tests/gateway/test_kanban_auto_decompose_live.py",
     "hermes/tests/gateway/test_kanban_auto_decompose_secret_scope.py",
     "hermes/tests/gateway/test_kanban_changes_requested_notifier.py",
@@ -15091,6 +15096,8 @@
     "hermes/website/static/oauth/client-metadata.json",
     "hermes/website/tsconfig.json",
     "patches/hermes/api-key-vault.patch",
+    "patches/hermes/channel-task-return.patch",
+    "patches/hermes/channel-task-routing.patch",
     "patches/hermes/codex-auxiliary-model-cooldown.patch",
     "patches/hermes/quiet-onboarding.patch",
     "patches/hermes/slack-acknowledgement.patch",
@@ -15101,6 +15108,8 @@
     "runtime/seatbelt/plugin.py",
     "runtime/slack_workspace.py",
     "runtime/vault/api.py",
+    "runtime/vault/channel_control.py",
+    "runtime/vault/channel_tasks.py",
     "runtime/vault/delegation.py",
     "runtime/vault/page.html",
     "runtime/vault/payments.py",
@@ -15204,6 +15213,13 @@
       "compact_transcript": "/12/transcript.jsonl",
       "content_hash": "/12/content_hash.txt",
       "prompt": "/12/prompt.txt"
+    },
+    {
+      "metadata": "/13/metadata.json",
+      "transcript": "/13/full.jsonl",
+      "compact_transcript": "/13/transcript.jsonl",
+      "content_hash": "/13/content_hash.txt",
+      "prompt": "/13/prompt.txt"
     }
   ],
   "token_usage": {
