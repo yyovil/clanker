@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_d5d04a714c4740779c1cc0724b625c7b\",0]","question":"I can’t see a new Slack retry or private-form submission yet. Since you just received a valid code, reply in this [Nike thread](https://clanker-global.slack.com/archives/D0C6F49F2KD/p1791728942718449): “My latest Nike code just arrived. Open a fresh private verification form for it; don’t resend the SMS.” Then enter the code only in the new private form. [Clanker QA](/Users/tanishqpalandurkar/.codex/skills/clanker-qa/SKILL.md) says testers must “never … approve anything,” so that retry message must come from you.","answer":"bro that nike otp expired. it was valid for 10mins only"}]
+</send_user_message_question_reply>
