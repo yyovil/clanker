@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 16,
+  "checkpoints_count": 43,
   "files_touched": [
     ".gitignore",
     "docs/decisions/2026-10-05-composio-browser-vault.md",
@@ -15083,6 +15083,7 @@
     "hermes/website/static/img/nous-logo.png",
     "hermes/website/static/oauth/client-metadata.json",
     "hermes/website/tsconfig.json",
+    "patches/hermes/quiet-onboarding.patch",
     "patches/hermes/slack-typing-lifecycle.patch",
     "runtime/cloud_browser/__init__.py",
     "runtime/cloud_browser/service.py",
@@ -15091,7 +15092,8 @@
     "runtime/slack_workspace.py",
     "runtime/vault/service.py",
     "runtime/vault/tools.py",
-    "scripts/apply-hermes-mods"
+    "scripts/apply-hermes-mods",
+    "scripts/configure-clanker-style"
   ],
   "sessions": [
     {
@@ -15121,6 +15123,13 @@
       "compact_transcript": "/3/transcript.jsonl",
       "content_hash": "/3/content_hash.txt",
       "prompt": "/3/prompt.txt"
+    },
+    {
+      "metadata": "/4/metadata.json",
+      "transcript": "/4/full.jsonl",
+      "compact_transcript": "/4/transcript.jsonl",
+      "content_hash": "/4/content_hash.txt",
+      "prompt": "/4/prompt.txt"
     }
   ],
   "token_usage": {
