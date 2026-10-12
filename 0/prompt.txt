@@ -1,0 +1,1 @@
+how can I use the slack cli to read a DM thread from clanker to provide context to the agent about what to fix next? also I have to tell the agent to use a specific slack acc since I've got 2 logged in simultaneously
