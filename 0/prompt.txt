@@ -1,0 +1,1 @@
+now mention one liner to tell the human to use this prompt to setup clanker for himself.
