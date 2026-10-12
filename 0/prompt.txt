@@ -1,0 +1,1 @@
+right now it feels like clanker is taking lots of time before responding. we can offset that having some kind of "clanker is typing..." indicator if slack events API allows that
