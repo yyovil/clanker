@@ -1,0 +1,17 @@
+Did you saw that we are getting many 503 erros from clanker harness because of the upstream vault api didn't responded within the timeout?
+
+---
+
+use the kernel cli for fetching the logs and then read the logs written by clanker (ain't nothing but a hermes agent under the hood)
+
+---
+
+I want you to track and find out what actually happened to those timed out requests in the upstream. when did the endpoints actually responded then if didn't responded within 15s timeout in most of the cases?
+
+---
+
+meaning the upstream provider is responding exactly with stipulated timeout period. there's some harness level bug that we need to fix to resolve all of those issues. don't we? use code review skills to find out what's the actual case here. this is causing terrible UX btw when using clanker and making it unreliable most of the time. bad for the business.
+
+---
+
+approved

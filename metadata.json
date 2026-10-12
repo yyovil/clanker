@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 290,
+  "checkpoints_count": 295,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -15161,6 +15161,8 @@
     "runtime/cloud_browser/kernel_client.py",
     "runtime/cloud_browser/kernel_diagnostics.py",
     "runtime/cloud_browser/kernel_payment_client.py",
+    "runtime/cloud_browser/kernel_transport.py",
+    "runtime/cloud_browser/kernel_vault_client.py",
     "runtime/cloud_browser/service.py",
     "runtime/cloud_browser/tools.py",
     "runtime/public_web/__init__.py",
@@ -15694,6 +15696,13 @@
       "compact_transcript": "/69/transcript.jsonl",
       "content_hash": "/69/content_hash.txt",
       "prompt": "/69/prompt.txt"
+    },
+    {
+      "metadata": "/70/metadata.json",
+      "transcript": "/70/full.jsonl",
+      "compact_transcript": "/70/transcript.jsonl",
+      "content_hash": "/70/content_hash.txt",
+      "prompt": "/70/prompt.txt"
     }
   ],
   "token_usage": {
