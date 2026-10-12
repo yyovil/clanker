@@ -1,0 +1,1 @@
+I want to re-run the benchmark, this time with browser replay and telementry on and download the replays and capture the corresponding slack thread screenshots in the [README.md](README.md)
