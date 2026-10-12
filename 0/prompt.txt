@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"REDACTED\",0]","question":"HeyGen’s greeting is still pending after more than 13 minutes. How long should this timing test run?","answer":"Keep waiting for completion"}]
+</send_user_message_question_reply>
