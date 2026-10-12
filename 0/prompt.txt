@@ -1,0 +1,1 @@
+Does Planker has this tool to discover alternative booking sites explicitly? Like, is there somewhere mentioned that use this tool to search for other booking sites explicitly? Like, is that hardcoded? If yes, then it's a terrible design. Let me know first of all concretely.
