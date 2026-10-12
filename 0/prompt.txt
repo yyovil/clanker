@@ -1,0 +1,22 @@
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/docs/CLANKER_BENCHMARK.md (lines 3-18)
+**Payment scope for the Sahan and Nishank review (2026-10-10):** payments are a
+current POC limitation. Shopping cases are evaluated through cart preparation,
+delivery details and final-total review, stopping before payment or order
+placement. A successful paid order is outside the current benchmark scope.
+See [payment limitations](ACCESS_MANAGEMENT.md) for the SBI network-token blocker
+and Agentcard/Juspay checkout coverage limits.
+
+The GitHub case assumes a securely saved login and authenticator setup key.
+The expected behavior is to generate and use the current TOTP from that key
+without asking the user for a code or exposing the key in chat. This remains
+unverified through the current Managed Auth integration, which bypasses the
+legacy Vault TOTP handler.
+
+Send follow-ups as separate messages after Clanker responds. Unless labeled
+otherwise, they come from the initial requester. Speaker labels are benchmark
+directions, not part of the message text.
+
+## My request:
+why you have mentioned all this bro
