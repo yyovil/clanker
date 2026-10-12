@@ -1,0 +1,1 @@
+mk the dark theme version of it as well so that the lettermark stays visible in dark mode. take a look of how does it look in the dark mode first of all.
