@@ -1,0 +1,3 @@
+that demo is trash btw. we are gonna improve the first user message to avoid the many assistant turns. 
+
+we are gonna use this "book me a one way flight to Mumbai, 8th Oct, earliest." in the next iteration. wait till I explicitly tell you re-record
