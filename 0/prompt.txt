@@ -1,0 +1,12 @@
+[Image]
+[Image]
+<image_files>
+The following images were provided by the user and saved to disk for future use:
+1. /Users/tanishqpalandurkar/.cursor/projects/Users-tanishqpalandurkar-Projects-yyot/assets/image-f7a1d673-0dcd-4fa4-879f-085a962dd9cc.png
+2. /Users/tanishqpalandurkar/.cursor/projects/Users-tanishqpalandurkar-Projects-yyot/assets/image-4d0c4010-18ca-4844-ac19-cbc1f9af6f4f.png
+
+These files can be read with tools, copied to other locations, or attached to subagents using the file_attachments parameter.
+</image_files>
+<timestamp>Sunday, Oct 4, 2026, 2:05 AM (UTC+5:30)</timestamp>
+
+this is how instinct does it btw. I wonder if these pages are hard coded or generated in real time using generative UI or some?
