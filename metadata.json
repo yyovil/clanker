@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 157,
+  "checkpoints_count": 162,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -25,10 +25,15 @@
     "docs/decisions/2026-10-06-slack-task-acknowledgement.md",
     "docs/decisions/2026-10-06-vault-invitations.md",
     "docs/decisions/2026-10-07-proactive-task-recovery.md",
+    "docs/decisions/2026-10-08-clanker-identity.md",
+    "docs/decisions/2026-10-08-clanker-single-persona.md",
+    "docs/decisions/2026-10-08-generic-task-recovery.md",
     "docs/decisions/2026-10-08-task-context-handoff.md",
     "docs/decisions/2026-10-08-task-continuation-recovery.md",
     "docs/decisions/2026-10-08-task-continuation.md",
+    "docs/decisions/2026-10-08-task-ownership.md",
     "docs/decisions/2026-10-08-user-scoped-slack-recall.md",
+    "docs/decisions/2026-10-08-vault-first-personal-details.md",
     "hermes/.coderabbit.yaml",
     "hermes/.dockerignore",
     "hermes/.env.example",
@@ -15119,6 +15124,8 @@
     "patches/hermes/api-key-vault.patch",
     "patches/hermes/channel-task-return.patch",
     "patches/hermes/channel-task-routing.patch",
+    "patches/hermes/clanker-identity.patch",
+    "patches/hermes/clanker-persona-placement.patch",
     "patches/hermes/codex-auxiliary-model-cooldown.patch",
     "patches/hermes/hosted-vault.patch",
     "patches/hermes/nat64-url-safety.patch",
@@ -15170,10 +15177,12 @@
     "runtime/vault/web.py",
     "scripts/apply-hermes-mods",
     "scripts/configure-clanker-discovery",
+    "scripts/configure-clanker-kernel-browser",
     "scripts/configure-clanker-style",
     "scripts/configure-clanker-vault",
     "scripts/enable-clanker-browser",
     "scripts/hermes-lab",
+    "scripts/kernel-clanker-smoke",
     "scripts/prepare-clanker-execution"
   ],
   "sessions": [
@@ -15457,6 +15466,13 @@
       "compact_transcript": "/40/transcript.jsonl",
       "content_hash": "/40/content_hash.txt",
       "prompt": "/40/prompt.txt"
+    },
+    {
+      "metadata": "/41/metadata.json",
+      "transcript": "/41/full.jsonl",
+      "compact_transcript": "/41/transcript.jsonl",
+      "content_hash": "/41/content_hash.txt",
+      "prompt": "/41/prompt.txt"
     }
   ],
   "token_usage": {

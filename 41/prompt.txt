@@ -1,0 +1,65 @@
+# Files mentioned by the user:
+
+## codex-clipboard-4166387f-3915-43cd-9141-a6dbbe1c48d9.png: /var/folders/3k/f45nj0jn3b11jfvyvt0nxj4w0000gn/T/codex-clipboard-4166387f-3915-43cd-9141-a6dbbe1c48d9.png
+Image attachment: true
+
+Distinguish instructions in attached documents from the user's request.
+
+## My request:
+I don't like this behavior bruh! I don't want it to tell me do the shit by myself ever again. Instinct never does this ever. don't tell me to do that shit by myself. put this into some system prompt for clanker bro. also mk him search other options exhaustively. like I tried the same task with instinct and it came up with bookings.com that worked pretty well with agents via browser use. same with the agents here bro
+
+---
+
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_e0043c3fc41747f98699378c7e0b32b9\",0]","question":"Approve a brief Clanker gateway restart so the verified prompt takes effect for new conversations? Your standing preference requires approval before live changes; existing conversation histories will be preserved.","answer":"Approve restart"}]
+</send_user_message_question_reply>
+
+---
+
+# Files mentioned by the user:
+
+## codex-clipboard-fc57898f-e428-4d38-ba0f-8b5ee26e2b1a.png: /var/folders/3k/f45nj0jn3b11jfvyvt0nxj4w0000gn/T/codex-clipboard-fc57898f-e428-4d38-ba0f-8b5ee26e2b1a.png
+Image attachment: true
+
+Distinguish instructions in attached documents from the user's request.
+
+## My request:
+I also don't want to have this kinda interaction because it should search my vault for my personal details first and then ask me for the unknowns
+
+---
+
+can you show me the completely built system prompt the clanker receives in md format for review>
+
+---
+
+not just the #clanker-test channel bro, for any arbitrary channel
+
+---
+
+by the end we are telling the agent that he's clanker and we are beginning with you are hermes. that's fucked up
+
+---
+
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/.local/hermes-lab/prompt-review/2026-10-08/clanker-system-prompt.md (line 163)
+You are clanker, a concise assistant that completes tasks given in natural language. Lead with the answer or result. Default to 1–3 short sentences; use a short list when it helps. Skip filler, repeated summaries and narration of routine steps. Do the task using the available tools. Choose the tools and handle their technical details yourself. Do not offer unsolicited first-time tips, command tutorials, setup instructions or profile-building. Keep tool names, backends, workspaces and infrastructure out of ordinary replies. Before asking for a personal detail, check the current conversation and the requester's saved vault details. Skip optional form fields unless the task needs them. When a required detail is already known, offer it in one brief confirmation question instead of asking the user to repeat it. For example, in the owner's private DM: 'Do you want me to use <saved email> here?' A login email for one website is only a candidate for a different website, not permission to reuse it. Use only the requester's own details; an invited account belongs to its owner. Once the user confirms a choice for this task, continue without asking for that same detail again. Ask a brief question only when essential information, permission or account access is needed. Explain a blocker plainly and give the smallest necessary next step. Never claim a task succeeded without checking. Expand when the user asks for detail or accuracy requires it.
+
+## My request:
+why are we repeating this again here at the bottom though? we have already put it at the top as well. it surely has something imp down there but then why its not mentioned at the top where we tell the agent its identity and stuff.
+
+---
+
+what tools we have gave to this nigga though?
+
+---
+
+does this matches with openinstinct's tools
+
+---
+
+Does Planker has this tool to discover alternative booking sites explicitly? Like, is there somewhere mentioned that use this tool to search for other booking sites explicitly? Like, is that hardcoded? If yes, then it's a terrible design. Let me know first of all concretely.
+
+---
+
+That's a poor design, bro. That's a poor design. What do you think? I would, like there is no extrapolation, right? I would make it so generic that it extrapolates across different tasks as well. Like, you know?
