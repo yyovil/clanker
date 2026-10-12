@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 170,
+  "checkpoints_count": 173,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -29,6 +29,7 @@
     "docs/decisions/2026-10-08-clanker-single-persona.md",
     "docs/decisions/2026-10-08-generic-task-recovery.md",
     "docs/decisions/2026-10-08-kernel-upstream-diagnostics.md",
+    "docs/decisions/2026-10-08-recalled-task-context.md",
     "docs/decisions/2026-10-08-task-context-handoff.md",
     "docs/decisions/2026-10-08-task-continuation-recovery.md",
     "docs/decisions/2026-10-08-task-continuation.md",
@@ -15133,6 +15134,7 @@
     "patches/hermes/payment-vault.patch",
     "patches/hermes/phone-sms-login.patch",
     "patches/hermes/quiet-onboarding.patch",
+    "patches/hermes/recalled-task-context.patch",
     "patches/hermes/slack-acknowledgement.patch",
     "patches/hermes/slack-message-edits.patch",
     "patches/hermes/slack-typing-lifecycle.patch",
@@ -15175,6 +15177,7 @@
     "runtime/vault/personal.py",
     "runtime/vault/service.py",
     "runtime/vault/store.py",
+    "runtime/vault/task_context.py",
     "runtime/vault/tools.py",
     "runtime/vault/vault.css",
     "runtime/vault/vault.js",
@@ -15505,6 +15508,13 @@
       "compact_transcript": "/45/transcript.jsonl",
       "content_hash": "/45/content_hash.txt",
       "prompt": "/45/prompt.txt"
+    },
+    {
+      "metadata": "/46/metadata.json",
+      "transcript": "/46/full.jsonl",
+      "compact_transcript": "/46/transcript.jsonl",
+      "content_hash": "/46/content_hash.txt",
+      "prompt": "/46/prompt.txt"
     }
   ],
   "token_usage": {
