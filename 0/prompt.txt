@@ -1,0 +1,1 @@
+I need to understand one thing before answering your question. did I approved the code behind redaction or it came from either of the upstream: hermes or kernel browser plugin for hermes?
