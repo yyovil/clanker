@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 90,
+  "checkpoints_count": 95,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -12,6 +12,7 @@
     "docs/decisions/2026-10-05-hosted-credential-flow.md",
     "docs/decisions/2026-10-06-channel-login-detour.md",
     "docs/decisions/2026-10-06-payment-vault.md",
+    "docs/decisions/2026-10-06-personal-info.md",
     "docs/decisions/2026-10-06-phone-sms-login.md",
     "docs/decisions/2026-10-06-slack-message-edits.md",
     "docs/decisions/2026-10-06-slack-task-acknowledgement.md",
@@ -15116,10 +15117,12 @@
     "runtime/vault/api.py",
     "runtime/vault/channel_control.py",
     "runtime/vault/channel_tasks.py",
+    "runtime/vault/clanker-wordmark.svg",
     "runtime/vault/delegation.py",
     "runtime/vault/login.py",
     "runtime/vault/page.html",
     "runtime/vault/payments.py",
+    "runtime/vault/personal.py",
     "runtime/vault/service.py",
     "runtime/vault/store.py",
     "runtime/vault/tools.py",
@@ -15276,6 +15279,13 @@
       "compact_transcript": "/20/transcript.jsonl",
       "content_hash": "/20/content_hash.txt",
       "prompt": "/20/prompt.txt"
+    },
+    {
+      "metadata": "/21/metadata.json",
+      "transcript": "/21/full.jsonl",
+      "compact_transcript": "/21/transcript.jsonl",
+      "content_hash": "/21/content_hash.txt",
+      "prompt": "/21/prompt.txt"
     }
   ],
   "token_usage": {
