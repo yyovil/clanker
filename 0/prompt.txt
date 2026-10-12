@@ -1,0 +1,1 @@
+I saw we only have 3 users and > 3 browser profiles. why? ok we should hv atmost 4 because we have shared the swiggy creds in between 2 users so 4 browser profiles and 4 corresponding vault mks sense but these many browser profiles? why?
