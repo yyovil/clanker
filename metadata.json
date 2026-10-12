@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 251,
+  "checkpoints_count": 256,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -43,6 +43,7 @@
     "docs/decisions/2026-10-09-owned-login-session-reuse.md",
     "docs/decisions/2026-10-09-signin-reply-ownership.md",
     "docs/decisions/2026-10-09-vault-slack-session-and-auth-recovery.md",
+    "docs/decisions/2026-10-09-yyovil-payment-blocker.md",
     "hermes/.coderabbit.yaml",
     "hermes/.dockerignore",
     "hermes/.env.example",
@@ -15628,6 +15629,13 @@
       "compact_transcript": "/60/transcript.jsonl",
       "content_hash": "/60/content_hash.txt",
       "prompt": "/60/prompt.txt"
+    },
+    {
+      "metadata": "/61/metadata.json",
+      "transcript": "/61/full.jsonl",
+      "compact_transcript": "/61/transcript.jsonl",
+      "content_hash": "/61/content_hash.txt",
+      "prompt": "/61/prompt.txt"
     }
   ],
   "token_usage": {
