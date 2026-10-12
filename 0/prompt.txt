@@ -1,0 +1,1 @@
+so you want me to store user's sensitive creds somewhere else than the sandbox itself if we are running the browser in the same sandbox?
