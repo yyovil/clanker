@@ -1,0 +1,1 @@
+yeah so we need recalls across different slack threads respective to the user. don't we?
