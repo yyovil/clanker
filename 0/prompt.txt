@@ -1,0 +1,7 @@
+# Response annotations:
+Each item contains text selected from an earlier Codex response and may include a user comment. Treat items as Annotation 1, Annotation 2, and so on in array order. Use every selection as context and address every comment. For every annotation you address, include its inline directive `:codex-annotation{index="N"}`, where N is its one-based array position (for example, `:codex-annotation{index="1"}`). Do not use unstructured annotation labels.
+<response-annotations>
+[{"text":"Create an explicit account permission before allowing private account access.","annotation":"for this what we can do is add an invite button in the vault page. users who are invited can use the selected creds on the vault owner's behalf and get the tasks done using vault owner's creds.","source":{"messageId":"msg_0ab9cd21c64a56ba016ac4220c1d2887d0be182b3664302120","startOffset":3037,"endOffset":3114}}]
+</response-annotations>
+
+## My request:
