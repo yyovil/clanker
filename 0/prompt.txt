@@ -1,0 +1,1 @@
+yeah so keeping a profile for a user in a slack workspace makes sense. now the clanker slack workspace only has 3 members so why do we have more than 3 hermes profiles present?
