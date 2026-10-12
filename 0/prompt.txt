@@ -1,0 +1,1 @@
+so we are gonna simply tell Sahan and Nishank that payments is currently a limitation. mention this in the relevant md file real quick and leave the code as it is.
