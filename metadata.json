@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 270,
+  "checkpoints_count": 273,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -44,6 +44,7 @@
     "docs/decisions/2026-10-09-signin-reply-ownership.md",
     "docs/decisions/2026-10-09-vault-slack-session-and-auth-recovery.md",
     "docs/decisions/2026-10-09-yyovil-payment-blocker.md",
+    "docs/decisions/2026-10-10-payment-instructions-and-remembered-cards.md",
     "hermes/.coderabbit.yaml",
     "hermes/.dockerignore",
     "hermes/.env.example",
@@ -15179,6 +15180,7 @@
     "runtime/slack_workspace.py",
     "runtime/vault/__init__.py",
     "runtime/vault/api.py",
+    "runtime/vault/card_payments.py",
     "runtime/vault/channel_control.py",
     "runtime/vault/channel_tasks.py",
     "runtime/vault/clanker-wordmark.svg",
@@ -15671,6 +15673,13 @@
       "compact_transcript": "/66/transcript.jsonl",
       "content_hash": "/66/content_hash.txt",
       "prompt": "/66/prompt.txt"
+    },
+    {
+      "metadata": "/67/metadata.json",
+      "transcript": "/67/full.jsonl",
+      "compact_transcript": "/67/transcript.jsonl",
+      "content_hash": "/67/content_hash.txt",
+      "prompt": "/67/prompt.txt"
     }
   ],
   "token_usage": {
