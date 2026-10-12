@@ -1,0 +1,1 @@
+I'd like to add some personalization. we can record the greeting in reaction to a new user join event received from the slack's events api. rest of the video could be pre-recorded and we just have to composite it togethere
