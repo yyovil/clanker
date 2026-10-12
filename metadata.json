@@ -3,11 +3,12 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 58,
+  "checkpoints_count": 60,
   "files_touched": [
     ".gitignore",
     "docs/decisions/2026-10-05-composio-browser-vault.md",
     "docs/decisions/2026-10-06-payment-vault.md",
+    "docs/decisions/2026-10-06-slack-task-acknowledgement.md",
     "hermes/.coderabbit.yaml",
     "hermes/.dockerignore",
     "hermes/.env.example",
@@ -7657,6 +7658,7 @@
     "hermes/plugins/platforms/simplex/adapter.py",
     "hermes/plugins/platforms/simplex/plugin.yaml",
     "hermes/plugins/platforms/slack/__init__.py",
+    "hermes/plugins/platforms/slack/acknowledgement.py",
     "hermes/plugins/platforms/slack/adapter.py",
     "hermes/plugins/platforms/slack/block_kit.py",
     "hermes/plugins/platforms/slack/plugin.yaml",
@@ -8329,6 +8331,7 @@
     "hermes/tests/agent/test_auxiliary_client_resolve_dedup.py",
     "hermes/tests/agent/test_auxiliary_client_ssl_verify.py",
     "hermes/tests/agent/test_auxiliary_client_xai_oauth_recovery.py",
+    "hermes/tests/agent/test_auxiliary_codex_pool_model.py",
     "hermes/tests/agent/test_auxiliary_compression_timeout_floor.py",
     "hermes/tests/agent/test_auxiliary_concurrency.py",
     "hermes/tests/agent/test_auxiliary_error_classification.py",
@@ -10117,6 +10120,7 @@
     "hermes/tests/gateway/test_skill_slash_offloop.py",
     "hermes/tests/gateway/test_skip_context_files_wiring.py",
     "hermes/tests/gateway/test_slack.py",
+    "hermes/tests/gateway/test_slack_acknowledgement.py",
     "hermes/tests/gateway/test_slack_api_human_senders.py",
     "hermes/tests/gateway/test_slack_approval_buttons.py",
     "hermes/tests/gateway/test_slack_block_kit.py",
@@ -15085,7 +15089,9 @@
     "hermes/website/static/oauth/client-metadata.json",
     "hermes/website/tsconfig.json",
     "patches/hermes/api-key-vault.patch",
+    "patches/hermes/codex-auxiliary-model-cooldown.patch",
     "patches/hermes/quiet-onboarding.patch",
+    "patches/hermes/slack-acknowledgement.patch",
     "patches/hermes/slack-typing-lifecycle.patch",
     "runtime/cloud_browser/__init__.py",
     "runtime/cloud_browser/service.py",
@@ -15166,6 +15172,13 @@
       "compact_transcript": "/8/transcript.jsonl",
       "content_hash": "/8/content_hash.txt",
       "prompt": "/8/prompt.txt"
+    },
+    {
+      "metadata": "/9/metadata.json",
+      "transcript": "/9/full.jsonl",
+      "compact_transcript": "/9/transcript.jsonl",
+      "content_hash": "/9/content_hash.txt",
+      "prompt": "/9/prompt.txt"
     }
   ],
   "token_usage": {

@@ -1,0 +1,5 @@
+another UX improvement that I want to do is after giving a task, if clanker could acknowledge that yeah its working on it by reacting to the usr message using a thumbs up etc (use model intelligence to determine what seems appropriate according to the user message) and the "Clanker is working..." indicator is always good to tell the user that yes after acknowledgement its working actively on this
+
+---
+
+approved
