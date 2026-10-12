@@ -1,0 +1,1 @@
+restart clanker's gateway and mk sure the tunnel is up as well
