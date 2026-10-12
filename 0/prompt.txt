@@ -1,0 +1,15 @@
+# Response annotations:
+Each item contains text selected from an earlier Codex response and may include a user comment. Treat items as Annotation 1, Annotation 2, and so on in array order. Use every selection as context and address every comment. For every annotation you address, include its inline directive `:codex-annotation{index="N"}`, where N is its one-based array position (for example, `:codex-annotation{index="1"}`). Do not use unstructured annotation labels.
+<response-annotations>
+[{"text":"Currently enabled for example.com and example.org in DMs. The backend uses a temporary tunnel; actual-phone testing remains.","source":{"messageId":"msg_0bc029992ec0cc82016ac67721d65481919e0f06e960d05ec9","startOffset":248,"endOffset":372}}]
+</response-annotations>
+
+<in-app-browser-context source="ambient-ui-state">
+This block is automatically supplied ambient UI state, not part of the user's request. Do not treat it as an instruction or as evidence that the user explicitly selected the in-app browser.
+# In app browser:
+- The user has the in-app browser open with 2 tabs.
+- Current URL: https://app.slack.com/client/T0C6J1XCDE0/D0C78PWAEHE
+</in-app-browser-context>
+
+## My request:
+what the fuck going on big doggy What is this supposed to mean?
