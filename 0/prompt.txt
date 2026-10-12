@@ -1,0 +1,6 @@
+```chat_selection
+agent_id: be2eed47-601f-45b0-b786-3887cb002bbe
+selected_text:
+provider: kernel (what Clanker built) — enroll a card in Kernel, fill the merchant’s normal Pay by card / Add New Card form. AgentCard and Link are not involved. Your decision doc says this explicitly.
+```
+ but we don't know if this is officially supported or not
