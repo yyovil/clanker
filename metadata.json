@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 300,
+  "checkpoints_count": 303,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -44,6 +44,7 @@
     "docs/decisions/2026-10-09-signin-reply-ownership.md",
     "docs/decisions/2026-10-09-vault-slack-session-and-auth-recovery.md",
     "docs/decisions/2026-10-09-yyovil-payment-blocker.md",
+    "docs/decisions/2026-10-10-edited-signin-retry.md",
     "docs/decisions/2026-10-10-payment-instructions-and-remembered-cards.md",
     "hermes/.coderabbit.yaml",
     "hermes/.dockerignore",
@@ -9798,6 +9799,7 @@
     "hermes/tests/gateway/test_gateway_mcp_oauth_unattended.py",
     "hermes/tests/gateway/test_gateway_platform_event_hook.py",
     "hermes/tests/gateway/test_gateway_process_exit.py",
+    "hermes/tests/gateway/test_gateway_request_text.py",
     "hermes/tests/gateway/test_gateway_shutdown.py",
     "hermes/tests/gateway/test_gateway_silence_tokens.py",
     "hermes/tests/gateway/test_gateway_streaming_nested_config.py",
@@ -15139,6 +15141,7 @@
     "patches/hermes/clanker-identity.patch",
     "patches/hermes/clanker-persona-placement.patch",
     "patches/hermes/codex-auxiliary-model-cooldown.patch",
+    "patches/hermes/gateway-request-text.patch",
     "patches/hermes/hosted-vault.patch",
     "patches/hermes/nat64-url-safety.patch",
     "patches/hermes/payment-vault.patch",
@@ -15724,6 +15727,13 @@
       "compact_transcript": "/73/transcript.jsonl",
       "content_hash": "/73/content_hash.txt",
       "prompt": "/73/prompt.txt"
+    },
+    {
+      "metadata": "/74/metadata.json",
+      "transcript": "/74/full.jsonl",
+      "compact_transcript": "/74/transcript.jsonl",
+      "content_hash": "/74/content_hash.txt",
+      "prompt": "/74/prompt.txt"
     }
   ],
   "token_usage": {
