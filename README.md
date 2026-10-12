@@ -29,6 +29,12 @@ Each video merges that task’s recorded clips at 4× speed.
 
 
 
+## Access management
+
+[How access is collected, reused, shared, and revoked.](docs/ACCESS_MANAGEMENT.md)
+
+[Known limits.](docs/KNOWN_LIMITS.md)
+
 ## Local setup
 
 Paste this into your coding agent:
@@ -42,11 +48,3 @@ Agent sessions used to build Clanker are recorded using [entire.io](https://enti
 To browse them or ask about the development process, paste this into your coding agent:
 
 > Read [docs/AGENT_SESSIONS_PROMPT.md](docs/AGENT_SESSIONS_PROMPT.md) and follow its instructions to set up Entire, fetch the Clanker agent sessions and walk me through them.
-
-
-
-## Access management
-
-[How access is collected, reused, shared, and revoked.](docs/ACCESS_MANAGEMENT.md)
-
-[Known limits.](docs/KNOWN_LIMITS.md)
