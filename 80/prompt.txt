@@ -1,0 +1,9 @@
+do we have an allowed_domain list or some? show me
+
+---
+
+why do we need this?
+
+---
+
+so how's our security posture in that sense?
