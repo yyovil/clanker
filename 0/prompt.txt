@@ -1,0 +1,1 @@
+also could you test this e2e? try google login only and open the vault page in my browser. I'll fill in the passcode
