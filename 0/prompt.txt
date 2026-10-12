@@ -1,0 +1,7 @@
+<heartbeat>
+  <automation_id>debug-yyovil-website-access</automation_id>
+  <current_time_iso>2026-10-09T18:00:03.605Z</current_time_iso>
+  <instructions>
+Track Slack thread https://clanker-global.slack.com/archives/D0C6F49F2KD/p1791567103647409 and continue diagnosing Clanker Kernel timeouts using Slack CLI and Kernel CLI logs. Securely use configured Clanker credentials without printing secrets. Verify Slack auth.test team T0C6J1XCDE0 bot U0C5Z1ZQHQX and DM participant U0C6M6DMWAW; paginate replies. Verify Kernel CLI identity matches the configured service account before drawing conclusions. Correlate Kernel audits/browser logs with /Users/tanishqpalandurkar/Projects/yyot/.local/hermes-lab/home/logs/approved-payment-restart-2026-10-09.log. Prepare safe local fixes when warranted. External access stays read-only; do not message Slack, change browsers, purchase, or restart services without explicit approval. Stay quiet while unchanged; notify only meaningful findings, resolution, failure, or required user action. Apply i-have-adhd skill.
+  </instructions>
+</heartbeat>
