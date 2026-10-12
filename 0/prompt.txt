@@ -1,0 +1,14 @@
+Use Slack CLI to read [Slack thread link](https://clanker-global.slack.com/archives/D0C6EAXPKEE/p1791493436288569) for context,\
+then investigate and fix the issue: why do I have to sign into slack many times I had to use the vault. also it somes shows this error.\
+\
+Target conversation:\
+\- Workspace: T0C6J1XCDE0\
+\- Account: Tanishq Palandurkar, user ID `U0C688SF7DZ`\
+\- Clanker DM: D0C6F49F2KD\
+\
+Use the existing configured Clanker bot credential securely.\
+Verify the workspace with auth.test and confirm the DM participant\
+is yyovil with conversations.info.\
+\
+Read the parent message and every reply, following pagination.\
+Keep Slack access read-only; do not post or change permissions.
