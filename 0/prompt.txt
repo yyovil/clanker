@@ -1,0 +1,1 @@
+look at my current usage and tell me if I can work exactly the same with headless mode as well. use the platform data from kernel.sh
