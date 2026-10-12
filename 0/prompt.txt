@@ -1,0 +1,1 @@
+meaning the upstream provider is responding exactly with stipulated timeout period. there's some harness level bug that we need to fix to resolve all of those issues. don't we? use code review skills to find out what's the actual case here. this is causing terrible UX btw when using clanker and making it unreliable most of the time. bad for the business.
