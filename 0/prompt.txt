@@ -1,0 +1,1 @@
+also I saw that we only have 3 users and more than 3 browser profiles. we should only have 4 profiles 3 for each user and 1 for shared access to swiggy credential. ya dig? so the logic is whenever we are sharing access to the some credentials with some other users they should use the shared browser profile.
