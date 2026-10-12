@@ -3,10 +3,14 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 114,
+  "checkpoints_count": 122,
   "files_touched": [
     ".gitignore",
     "README.md",
+    "config/hermes-baseline.json",
+    "config/hermes-defaults.yaml",
+    "config/slack-app-manifest.json",
+    "docs/INSTALL.md",
     "docs/SETUP.md",
     "docs/decisions/2026-10-05-composio-browser-vault.md",
     "docs/decisions/2026-10-05-hosted-credential-flow.md",
@@ -15342,6 +15346,13 @@
       "compact_transcript": "/29/transcript.jsonl",
       "content_hash": "/29/content_hash.txt",
       "prompt": "/29/prompt.txt"
+    },
+    {
+      "metadata": "/30/metadata.json",
+      "transcript": "/30/full.jsonl",
+      "compact_transcript": "/30/transcript.jsonl",
+      "content_hash": "/30/content_hash.txt",
+      "prompt": "/30/prompt.txt"
     }
   ],
   "token_usage": {
