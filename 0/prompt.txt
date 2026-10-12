@@ -1,0 +1,10 @@
+<environment_context>
+  <current_date>2026-10-12</current_date>
+  <timezone>Asia/Kolkata</timezone>
+  <filesystem><workspace_roots><root>/Users/tanishqpalandurkar/Projects/yyot</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
+  <subagents>
+    <agent name="/root/evidence_readiness" />
+    <agent name="/root/replay_readiness" />
+    <agent name="/root/telemetry_capture" />
+  </subagents>
+</environment_context>
