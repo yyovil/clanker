@@ -1,0 +1,1 @@
+respond with the absolute path for clanker's data dir
