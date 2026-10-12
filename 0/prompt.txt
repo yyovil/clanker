@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"REDACTED\",0]","question":"Slack’s expanded player shows replies to the preview message, rather than the original task thread. Which flow should we build?","answer":"Make the preview message the task’s ongoing thread, retaining the original task context (recommended)"}]
+</send_user_message_question_reply>
