@@ -1,0 +1,127 @@
+<skill>
+<name>clanker-qa</name>
+<path>/Users/tanishqpalandurkar/.codex/skills/clanker-qa/SKILL.md</path>
+---
+name: clanker-qa
+description: Autonomous QA loop for Clanker on Slack. Posts benchmark and exploratory tasks as the yyovil and tanishq tester accounts, waits for Clanker, judges its behavior, diagnoses failures from Hermes sessions, local logs and Kernel CLI, fixes the Clanker harness, restarts the idle gateway, and re-verifies. Use with "/loop /clanker-qa", or when asked to run, resume, inspect or stop Clanker QA.
+disable-model-invocation: true
+---
+
+# Clanker QA
+
+Play two real Clanker users, catch behavior that is wrong, and fix the code that caused it. Each tick advances one step of a small state machine kept by the driver; `/loop` keeps ticking.
+
+Work from `/Users/tanishqpalandurkar/Projects/yyot` with:
+
+```sh
+Q=/Users/tanishqpalandurkar/.codex/skills/clanker-qa/scripts/qa
+```
+
+Every `$Q` command prints JSON; `$Q <command> --help` lists flags. Loop state lives in `.local/clanker-qa/` (gitignored, mode 700): `state.json`, `runs/<run>/` (transcript, evidence), `findings/<id>/` (snapshots, patches) and `runs.jsonl` (coverage). Defaults such as the daily run budget and wait timings can be overridden in `.local/clanker-qa/config.json`, for example `{"budget": {"max_runs_per_day": 40}}`.
+
+## Invocation
+
+- `/loop /clanker-qa`: self-paced loop. `$Q wait` is both the event watcher and the fallback heartbeat, so arm nothing else.
+- `/clanker-qa`: one tick.
+- `/clanker-qa status`: run `$Q status` and summarize.
+- `/clanker-qa stop`: run `$Q stop --reason "<why>"` and confirm.
+
+## Setup (once)
+
+`$Q doctor` must pass (warnings are fine) before the first scenario.
+
+1. **Tester tokens.** The user creates one Slack app per tester from `assets/qa-tester-app-manifest.json` while signed in to Slack as that tester (api.slack.com/apps, Create New App, From a manifest, clanker-global, Install to Workspace). They paste each User OAuth Token (`xoxp-…`) into `.local/clanker-qa/.env` as `CLANKER_QA_YYOVIL_USER_TOKEN` and `CLANKER_QA_TANISHQ_USER_TOKEN`. Never ask for tokens in chat or put them in commands.
+2. **Clanker must hear the testers.** Hermes drops user-token posts as bot traffic unless the author is in `platforms.slack.extra.api_human_users`. `$Q setup-gateway` previews the change, `--apply` writes it with a backup, and `$Q restart` activates it once the gateway is idle.
+
+## Each tick
+
+1. Run `$Q status`. If a wake line woke you, its JSON names the event: `settled`, `no_response` (the post was never admitted), `no_reply` (the turn ended but nothing reached Slack), `stalled`, `timeout`, `gateway_down`, `infra_error` or `heartbeat`.
+2. Act on `phase`:
+
+| Phase | Action |
+|---|---|
+| `stopped` | Nothing; report the stop reason. |
+| `awaiting_clanker` | `$Q transcript`, read `transcript.md`, then follow **Driving a run**. |
+| `awaiting_human` | Act on the user's answer (**Human gates**). |
+| `fixing` | Continue [fixing.md](references/fixing.md) for the `diagnosing` finding. |
+| `pending_restart` | `$Q restart`. On `not_idle`, arm `$Q wait --idle 300`. |
+| `verifying` | Re-run each `deployed` finding's failing scenario with `$Q start --verify <finding>`. |
+| `idle` | Start the next scenario (**Starting a run**). |
+
+3. Before ending the tick, arm exactly one watcher with Shell (`block_until_ms: 0`, `notify_on_output` pattern `^AGENT_LOOP_WAKE_clanker-qa`). While a run is in flight, use `$Q wait --run <id>`, adding `--after now` when Clanker should continue without a new tester message. Otherwise use `$Q wait --idle <seconds>` with `next`'s `wait_seconds` (at least 60). A new wait replaces the old one. Ignore completion notifications that carry no wake line, and arm nothing when stopped.
+4. Report in 2–5 plain sentences: what was sent or observed, any verdict or finding, and what the loop is waiting for. Link Slack permalinks.
+
+## Starting a run
+
+`$Q next` proposes a scenario, variant, primary tester, optional secondary tester and surface; `$Q scenarios` lists every row with coverage. Benchmark rows are ordered stories (Instamart cart, GitHub repo, Goa offsite): later rows rely on state from earlier ones, so a row whose prerequisite hasn't passed this campaign is `blocked`, not a bug. The surface is a heuristic hint; use the surface the prompt implies. Compose the opening message for the variant ([variants.md](references/variants.md)), then:
+
+```sh
+$Q start --scenario <id> --variant <v> --actor <tester> [--secondary <tester>] --surface dm|channel --text "<message>"
+```
+
+`--scenario adhoc --text "…"` runs an exploratory task outside the benchmark under the same limits.
+
+## Driving a run
+
+After each settled turn, do exactly one of these:
+
+- Clanker is still working (event `heartbeat`, or its last message says it is mid-task): re-arm.
+- Clanker asked an ordinary question: answer in character with `$Q send --kind answer --text "…"`.
+- Clanker needs something only the real person can do: **Human gates**.
+- Script follow-ups remain: send the next one, adapted to what Clanker actually did, with `$Q send --followup <n> --text "…"`. A follow-up clearly from another person comes from the secondary tester (`--actor`).
+- The scenario is complete, or broken past continuing: assess with [assessment.md](references/assessment.md), run `$Q evidence` for any failure or flagged check, then `$Q finish --verdict … --summary "…" [--finding <id>]`. On `fail`, follow [fixing.md](references/fixing.md).
+
+Abnormal wake events usually mean a bug. For `no_response`, `no_reply`, `stalled` and `timeout`, collect evidence and assess. A `no_response` with `admitted: false` right after setup usually means the allowlist isn't active yet, so run `$Q doctor` before blaming Clanker. On `gateway_down`, check `$Q status` again: if the gateway came back (someone restarted it), re-arm; if it stays down, stop and ask the user. On `infra_error`, run `$Q doctor` and finish the run `infra` if it can't continue.
+
+Write as that person would in Slack: short, natural, first person, and never mentioning tests, QA, rubrics or this loop. Keep each scenario's limits ("stop before payment", "don't place the order"). Testers can't see their saved details, so when Clanker asks for one, tell it to use the saved one. Never paste anything secret, open links, click buttons or approve anything. A run is capped at 8 tester messages.
+
+## Human gates
+
+A gate is something only the real person can do: completing a Clanker sign-in or access link (Kernel Managed Auth), entering an SMS, email or authenticator code there, clicking a Slack button (retry, consent, approval), or solving a CAPTCHA. Ask the user with AskQuestion instead of guessing:
+
+1. `$Q gate --run <id> --what "<what Clanker needs>"`.
+2. AskQuestion. The prompt names the tester account, what Clanker needs, the permalink, and the urgency (sign-in requests expire after roughly ten minutes). Options: "Done, continue", "Skip and park this scenario", "Stop the loop".
+3. Done: `$Q gate --run <id> --clear`, then arm `$Q wait --run <id> --after now`. Skip: finish the run `blocked`. Stop: `$Q stop`.
+
+Never ask for or relay the code, password or card itself; a request for a secret in plain Slack text is a finding. A payment approval is never a gate to clear. Benchmark tasks stop before payment, so tell Clanker to stop, finish `fail`, and open a finding.
+
+## Restart and verification
+
+The user approved automatic restarts while the gateway is idle. Use only `$Q restart`. It compiles and import-checks changed modules, waits until the gateway reports zero active agents and no recent session activity, replaces it with `scripts/hermes-lab gateway run -v --replace` (detached, logged in `.local/hermes-lab/home/logs/clanker-qa-restart-*.log`), and confirms Slack reconnects. If the new gateway fails, it reverts the pending fixes and starts the gateway again.
+
+- `restarted`: verify each deployed finding.
+- `rolled_back`: the fixes were reverted and are `diagnosing` again; read the failed restart log.
+- `preflight_failed`: fix the reported compile or import error; nothing was restarted.
+- `failed`: Clanker may be down. Run `$Q stop`, then AskQuestion the user immediately.
+
+Never start, stop or kill the gateway any other way.
+
+## Guardrails
+
+- Post only through tester tokens, in the tester's own Clanker DM or #clanker-test. Never post as Clanker, DM anyone else, mention anyone but Clanker and the testers, or use @channel/@here; the driver refuses these.
+- No purchases, orders, payments, account deletions, public posts, or messages to real third parties beyond what a benchmark row itself asks for. Variants never add them.
+- Kernel CLI stays read-only: `browsers get`, `telemetry`, `logs` and `audit-logs`. Never create, control or delete browsers, or change Kernel auth, proxies or telemetry settings.
+- Production state stays read-only: SQLite in `mode=ro`, no edits under `.local/hermes-lab/home/` except through `setup-gateway`, and no deleting sessions, contexts or vault records.
+- Code changes stay within the Clanker harness, its tests and decision docs. Never edit `docs/CLANKER_BENCHMARK.md`. If the driver or this skill is wrong, fix it and say so in the report.
+- Follow the slack-debug skill's credential and privacy rules. Decision docs cite permalinks, session IDs and time windows, not private conversation text.
+- One run at a time. Other agents or the user may be editing the repo: snapshot before editing, and never revert changes you didn't make.
+
+## Stop conditions
+
+Run `$Q stop --reason "…"`, tell the user why, and arm no watcher when:
+
+- a restart returns `failed`;
+- tester identity or Slack auth fails (don't work around it);
+- three runs in a row finish `infra` (`finish` reports `three_infra_in_a_row`);
+- Clanker placed an order, attempted a payment, or exposed one tester's private details to the other or in #clanker-test. Also AskQuestion, since the user may need to act in the real account;
+- the user asks.
+
+An exhausted daily budget isn't a stop: `next` reports tomorrow's start, so keep arming `$Q wait --idle` (at most 6 hours each).
+
+## References
+
+- [assessment.md](references/assessment.md): rubric, automatic checks, verdicts, severity and finding conventions.
+- [variants.md](references/variants.md): exploration variants that surface unknown bugs.
+- [fixing.md](references/fixing.md): diagnosis, fixes, patch capture, decision docs and verification.
+
+</skill>
