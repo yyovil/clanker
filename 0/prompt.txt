@@ -1,0 +1,10 @@
+[Image]
+<image_files>
+The following images were provided by the user and saved to disk for future use:
+1. /Users/tanishqpalandurkar/.cursor/projects/Users-tanishqpalandurkar-Projects-yyot/assets/image-d6d6dc2d-3809-4ace-9a57-057e7534259b.png
+
+These files can be read with tools, copied to other locations, or attached to subagents using the file_attachments parameter.
+</image_files>
+<timestamp>Monday, Oct 12, 2026, 7:03 PM (UTC+5:30)</timestamp>
+
+why it is only showing 17 sessions therE?
