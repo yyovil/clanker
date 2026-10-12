@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_2cf4cebb72b54ffe96504084da56d3fb\",0]","question":"Clanker still can’t reach IndiGo checkout and asks to try another booking site. Should it keep the 8:45 pm IndiGo flight and use another site?","answer":"what about indigo flight through Google flights platform?"}]
+</send_user_message_question_reply>
