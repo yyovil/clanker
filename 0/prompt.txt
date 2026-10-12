@@ -1,0 +1,1 @@
+you are only removing clanker's `/runtime`redaction logic right? that shit was costing us 15 kernel requests per browser action which would be great to not have in first place
