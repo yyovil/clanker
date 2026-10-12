@@ -1,0 +1,1 @@
+this is risky because some platform may expose the api keys in plain text format to copy for short time and then if the agent took a ss or some there, then it'd be a problem so I'd rather not have this feature in place
