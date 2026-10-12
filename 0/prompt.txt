@@ -1,0 +1,1 @@
+so meaning if the gateway goes down, the tunnel goes down as well?
