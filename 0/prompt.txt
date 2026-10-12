@@ -1,0 +1,1 @@
+so the 15s time out is put there by the guys who built the kernel plugin for hermes?
