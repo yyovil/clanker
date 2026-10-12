@@ -1,0 +1,1 @@
+I think we should tell this explicitly in the repo that reviewers can view the agent sessions used to build clanker publicly using entire.io and mention a prompt for their agent to setup entire for them if they don't use it and onboard them to view the agent sessions or ask questions related to my dev process while building clanker.
