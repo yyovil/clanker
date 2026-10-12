@@ -35,6 +35,14 @@ Paste this into your coding agent:
 
 > Read [docs/SETUP_PROMPT.md](docs/SETUP_PROMPT.md) and follow its instructions to set up and start Clanker locally from this checkout.
 
+## Agent sessions
+
+The coding-agent sessions used to build Clanker are public. They're recorded with [Entire](https://docs.entire.io/overview) and published in this repo as Git refs under `refs/entire/checkpoints/`: the prompts, responses, tool calls and files behind each change.
+
+To browse them or ask about the development process, paste this into your coding agent:
+
+> Read [docs/AGENT_SESSIONS_PROMPT.md](docs/AGENT_SESSIONS_PROMPT.md) and follow its instructions to set up Entire, fetch the Clanker agent sessions and walk me through them.
+
 
 
 ## Access management
