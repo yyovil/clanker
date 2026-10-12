@@ -1,0 +1,70 @@
+<skill>
+<name>find-bugs</name>
+<path>/Users/tanishqpalandurkar/.codex/skills/find-bugs/SKILL.md</path>
+---
+name: find-bugs
+description: Systematically audit an application or feature for reproducible bugs and create verified yyoreel video evidence for each confirmed finding. Use for bug-discovery audits with video reporting, rather than ordinary implementation or fixing a known issue.
+---
+
+# Find Bugs
+
+Complete an agreed scope of investigation, then deliver a video for every confirmed bug. A few convincing findings are not a completion criterion. Do not promise exhaustive bug detection.
+
+## Establish coverage
+
+Inspect the requested feature, relevant code, existing tests, and available runtime. Define a bounded coverage checklist before testing. Infer a reasonable scope from the request; clarify only when ambiguity materially affects the work. Do not expand a feature audit into an entire-product audit.
+
+Cover relevant normal behavior, edge cases, state transitions, recovery paths, and interactions. Test combinations that expose state-dependent bugs, not just features independently: for example, typing while scrolled back, resizing during output, or switching sessions during reconnect. These are examples, not a terminal-only checklist.
+
+For visible interactions, define separate expectations for functional correctness and rendered usability. Copying the right text does not establish that the selection is readable; receiving focus does not establish that focus is visible. Mark only the checked expectation as passed. Inspect relevant intermediate states, such as an active selection, before a later action clears or changes them.
+
+Track each item internally as passed, confirmed bug, unconfirmed suspicion, or untested, with evidence and reasons for gaps. Existing tests and code inspection guide exploration; they do not substitute for observing the behavior being reported.
+
+## Investigate before producing videos
+
+Begin with a short, ordinary-use pass through the actual feature in its application context before concentrating on edge cases or isolated harnesses. Exercise its primary interactions and inspect their visible results at normal viewing size. For theme-sensitive UI, sample those interactions in the supported light and dark appearances; checking theme switching alone does not cover interaction readability. Choose other state combinations by relevance rather than testing every permutation. If the live surface is unavailable, continue independent investigation and record the integration coverage gap.
+
+Use isolated production-component harnesses to narrow causes and exercise difficult states, but keep their coverage distinct from the live application's styles, content, and layout. For component or library migrations, inspect coupled settings and inherited defaults, such as selection foreground and background, then verify their rendered effect. Configuration inspection alone cannot establish a visual pass.
+
+Work through the checklist before spending time on polished recordings or narration. Save lightweight evidence during discovery. Record newly discovered relevant cases in the checklist without expanding scope indefinitely.
+
+Before closing discovery, compare the checklist with the feature's everyday user actions. Check for broad passes supported only by data assertions, and inspect any relevant visual states still missing evidence. Capturing a screenshot is not the same as inspecting it. Review the whole relevant component in saved frames, not only the symptom currently under investigation; pursue other visible failures before polishing recordings.
+
+Stop when the agreed coverage is addressed, an explicit user time/budget limit is reached, or a specific blocker prevents further useful testing. A blocked area does not prevent testing independent areas. Never silently stop because enough bugs have been found.
+
+For each confirmed bug, establish:
+
+- Minimal repeatable steps and relevant environment/preconditions.
+- Expected behavior and the basis for that expectation.
+- Actual observed behavior and user impact.
+- Whether evidence comes from the live application or an isolated reproduction using the production component.
+
+Separate recorder/automation failures, test-harness errors, and unavailable external services from product bugs. A source-code suspicion alone is not a confirmed finding. Avoid duplicate findings with the same underlying defect.
+
+This is discovery, not permission to fix production behavior. Minimal local reproduction harnesses are appropriate; preserve unrelated work, user data, and live session drafts. Do not submit commands or messages to live agents merely to obtain footage when an isolated reproduction suffices.
+
+## Produce and verify video evidence
+
+Create a yyoreel for every confirmed bug. Use the available yyoreel skill or installed CLI documentation for recording mechanics. Respect the user's requested recorder/version and do not silently substitute an unrelated tool.
+
+Resolve presentation settings from explicit current instructions first, then applicable existing project/user settings, then tool defaults. Respect recording quality, dimensions, frame rate, background, HUD, narration, voice, and output preferences. Do not hardcode settings from previous examples. Ask only when a missing preference materially affects the result.
+
+When ElevenLabs narration is requested or configured, use the available ElevenLabs capabilities and relevant skill. Narrate only validated behavior, synchronize speech with visible actions, and distinguish isolated demonstrations from live-session tests. Do not silently replace required narration with HUDs or silent footage. Report a concrete blocker if the requested media cannot be completed.
+
+Each video must show the trigger and observed failure clearly. Do not stage the claimed result, alter production behavior to manufacture a failure, or describe an untested downstream effect as observed. Keep the bug index out of the videos.
+
+Before delivery, inspect the relevant frames or playback, verify that the video demonstrates the reported bug, check the complete file decodes, and check requested audio is present and untruncated. Link to the verified final artifact, not a raw capture or an unfinished render.
+
+## Final response: index only
+
+For an audit, return exactly one Markdown table in the assistant's final response, with these columns:
+
+| Bug | What goes wrong | Video |
+|---|---|---|
+| Short bug title | Concise observed failure; identify isolated evidence when applicable. | [Watch yyoreel](verified-artifact-path-or-url) |
+
+Use one row per confirmed bug. Put more impactful findings first. Do not create a separate index file. Do not add an introduction, headings, summary, coverage notes outside the table, or follow-up offers.
+
+If a confirmed bug's video cannot be completed, retain its row and state the specific blocker in the Video cell; do not imply the deliverable is finished. For material audit gaps, add a final `Coverage limitation` row explaining what remains untested and why. If no bugs are confirmed, use a `No confirmed bugs` row that states the tested scope and any material limitation, with `—` in the Video cell. Never equate that result with a bug-free product.
+
+</skill>
