@@ -1,0 +1,1 @@
+why do we need a profile for shared-channel conversations? why we don't we have a profile at workspace level to share context cross channels and in the shared channel threads?
