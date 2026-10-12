@@ -1,0 +1,116 @@
+assuming the demo video is finished recording, what else do we need to complete the assignment ?
+
+---
+
+1st is done
+
+---
+
+2nd is also done
+
+---
+
+put the lettermark in [README.md](README.md) first of all, then leave space for the 1st demo. then lets prepare a table where we will demo the creds thingy, live browser preview for showing off our taste and UX and vault invite feature.
+
+---
+
+the table need to be 2 colns. on the right we are gonna put the relevant video and on the left we are gonna put the heading along with the concise description
+
+---
+
+rm rest of the things below the table
+
+---
+
+Is there anything else to showoff through the demos?
+
+---
+
+nah I'd rather not. let me know what else do they need in the assignment after these demos
+
+---
+
+yeah so I'd rather provide a prompt so that they can use it to setup/start the project in one go.
+
+---
+
+assuming that they have already cloned the repo.
+
+---
+
+don't target it for macos only
+
+---
+
+just be concise as you are writing this prompt for the worker agent.
+
+---
+
+bro tell them about the deps first of all like what do you need to have on your system to run clanker. so we need python and shit for this. like that so confirm if that's present, otherwise install it
+
+---
+
+why do we need browser-use, agent-browser and chromium when browser automation is ran using composio's browser tool?
+
+---
+
+also won't they have to create a slack app with the all the required permissions clanker's slack app has?
+
+---
+
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/docs/SETUP_PROMPT.md (lines 13-14)
+Node.js, Browser Use,
+agent-browser, and Chromium are not prerequisites for hosted browsin
+
+## My request:
+why the fuck would you mention this in the setup bruh?
+
+---
+
+why don't you link the json file that contains all the perms to run clanker as expected? passing exact settings would be very helpful
+
+---
+
+we should gitignore the output right?
+
+---
+
+and the verification and the videos too
+
+---
+
+also tell what md files we don't need in the shared repo?
+
+---
+
+agreed
+
+---
+
+now mention one liner to tell the human to use this prompt to setup clanker for himself.
+
+---
+
+btw did we told the agent that it will need composio acc to set it up and what tool will be needed to connected?
+
+---
+
+put a section: local setup and just mention the prompt that directs agent to the right doc and continue setting clanker up locally from there
+
+---
+
+now only thing that's remaining is the brief note about access management
+
+---
+
+now I wonder what does the credential handles means?
+
+---
+
+Now don't you think we need to mention that explicitly in the briefing as well, so that the reader gets the idea in very first go?
+
+---
+
+I think we have to demo the authenticator based action as well
