@@ -1,0 +1,1 @@
+so the agent wouldn't have context cross channel then. can we counter that by having a one profile for the workspace instead? can we do that?
