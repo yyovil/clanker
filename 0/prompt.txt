@@ -1,0 +1,1 @@
+so how we are gonna deal with the 409: wallet is pending authorization. what we did wrong here btw?
