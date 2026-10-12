@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 304,
+  "checkpoints_count": 305,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -15194,6 +15194,7 @@
     "runtime/vault/kernel_service.py",
     "runtime/vault/login.py",
     "runtime/vault/managed_auth.py",
+    "runtime/vault/owner_approval.py",
     "runtime/vault/page.html",
     "runtime/vault/payments.py",
     "runtime/vault/personal.py",
@@ -15741,6 +15742,13 @@
       "compact_transcript": "/75/transcript.jsonl",
       "content_hash": "/75/content_hash.txt",
       "prompt": "/75/prompt.txt"
+    },
+    {
+      "metadata": "/76/metadata.json",
+      "transcript": "/76/full.jsonl",
+      "compact_transcript": "/76/transcript.jsonl",
+      "content_hash": "/76/content_hash.txt",
+      "prompt": "/76/prompt.txt"
     }
   ],
   "token_usage": {

@@ -1,0 +1,11 @@
+[$find-bugs](/Users/tanishqpalandurkar/.codex/skills/find-bugs/SKILL.md) in the patches we have create for hermes to turn it into clanker and brief me about each one of the findings for lesser cognitive fatigue.
+
+---
+
+# Response annotations:
+Each item contains text selected from an earlier Codex response and may include a user comment. Treat items as Annotation 1, Annotation 2, and so on in array order. Use every selection as context and address every comment. For every annotation you address, include its inline directive `:codex-annotation{index="N"}`, where N is its one-based array position (for example, `:codex-annotation{index="1"}`). Do not use unstructured annotation labels.
+<response-annotations>
+[{"text":"keep each finding short and easy to scan","annotation":"the scan should be thorough but the agent's response needs to be short and concise.","source":{"messageId":"msg_06679bc7905c7cdc016aca0343374081919bcc12d76e40c58d","startOffset":77,"endOffset":117}}]
+</response-annotations>
+
+## My request:
