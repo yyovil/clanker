@@ -1,0 +1,7 @@
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/docs/CLANKER_BENCHMARK.md (line 19)
+ Don’t book anything.
+
+## My request:
+remove such mentions of not booking, paying etc. because they cause unecessary noise in the interaction during the demo.
