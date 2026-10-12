@@ -1,0 +1,1 @@
+[$find-bugs](/Users/tanishqpalandurkar/.codex/skills/find-bugs/SKILL.md) in the patches we have create for hermes to turn it into clanker and brief me about each one of the findings for lesser cognitive fatigue.
