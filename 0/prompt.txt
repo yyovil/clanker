@@ -1,0 +1,1 @@
+today credential filling is handled through kernel's vault. so why do we need this redaction. kernel's doc says that their mech of filling creds doesn't leak them into llms context
