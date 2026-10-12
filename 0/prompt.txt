@@ -1,0 +1,1 @@
+but this approach will mk it very rigid and overfitted for one of the problem. I want a very generic solution
