@@ -1,0 +1,1 @@
+don't tell how to run the benchmark. just mention that clanker scores a perfect 100 in this [benchmark]\(link to the benchmark) and then followed by a 3 column table: first column for the task, 2nd column for the slack thread ss and 3rd for the replays.
