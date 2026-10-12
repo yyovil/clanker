@@ -1,0 +1,1 @@
+are we using per user browser profiles or not? use kernel cli to find out
