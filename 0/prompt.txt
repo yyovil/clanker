@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_0c17ab9895354af99284a48c8f9d0801\",0]","question":"Nike successfully filled yyovil’s saved mobile number and reached the SMS verification screen. Open “Enter verification code” in this private Slack card and enter the fresh SMS code there: https://clanker-global.slack.com/archives/D0C6F49F2KD/p1791729507094739 . Issued at 20:08 IST; the code may expire soon. Don’t send the code here. Clanker QA reserves entering SMS codes in the private form for the real account owner.","answer":"Done, continue"}]
+</send_user_message_question_reply>
