@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_f3sSEDdnZcoFcDuGYYJZ6sxY\",0]","question":"Does the “1 reply” button under the new flight prompt open the thread when you click it in the recording Chrome window?","answer":"Yes, it opens"}]
+</send_user_message_question_reply>
