@@ -1,4 +1,7 @@
-![Clanker lettermark](assets/clanker-lettermark.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/clanker-lettermark-dark.svg">
+  <img alt="Clanker lettermark" src="assets/clanker-lettermark.svg">
+</picture>
 
 **Clanker** is a browser agent that lives in your Slack workspace to get your online work done.
 
