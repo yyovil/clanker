@@ -1,0 +1,9 @@
+<in-app-browser-context source="ambient-ui-state">
+This block is automatically supplied ambient UI state, not part of the user's request. Do not treat it as an instruction or as evidence that the user explicitly selected the in-app browser.
+# In app browser:
+- The user has the in-app browser open with 2 tabs.
+- Current URL: https://app.slack.com/client/T0C6J1XCDE0/D0C78PWAEHE
+</in-app-browser-context>
+
+## My request:
+Why do we have got a law list here? Can't we just simply put a car like a white card to allow everything? What are the cons?
