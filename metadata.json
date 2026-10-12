@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 173,
+  "checkpoints_count": 175,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -29,6 +29,7 @@
     "docs/decisions/2026-10-08-clanker-single-persona.md",
     "docs/decisions/2026-10-08-generic-task-recovery.md",
     "docs/decisions/2026-10-08-kernel-upstream-diagnostics.md",
+    "docs/decisions/2026-10-08-personal-identity.md",
     "docs/decisions/2026-10-08-recalled-task-context.md",
     "docs/decisions/2026-10-08-task-context-handoff.md",
     "docs/decisions/2026-10-08-task-continuation-recovery.md",
@@ -15171,6 +15172,7 @@
     "runtime/vault/channel_tasks.py",
     "runtime/vault/clanker-wordmark.svg",
     "runtime/vault/delegation.py",
+    "runtime/vault/identity.py",
     "runtime/vault/login.py",
     "runtime/vault/page.html",
     "runtime/vault/payments.py",
@@ -15515,6 +15517,13 @@
       "compact_transcript": "/46/transcript.jsonl",
       "content_hash": "/46/content_hash.txt",
       "prompt": "/46/prompt.txt"
+    },
+    {
+      "metadata": "/47/metadata.json",
+      "transcript": "/47/full.jsonl",
+      "compact_transcript": "/47/transcript.jsonl",
+      "content_hash": "/47/content_hash.txt",
+      "prompt": "/47/prompt.txt"
     }
   ],
   "token_usage": {
