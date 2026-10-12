@@ -1,0 +1,6 @@
+```chat_selection
+agent_id: 8baa6b0c-2316-43ca-afc2-51c905b1e7d9
+selected_text:
+The biggest is that a saved password is typed into a browser that the agent's own code can also read.
+```
+ what the fuck does that mean?
