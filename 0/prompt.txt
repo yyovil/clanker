@@ -1,0 +1,1 @@
+can we get the a free domain from cf? like from cloudflare pages service?
