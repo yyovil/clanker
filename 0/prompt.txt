@@ -1,0 +1,23 @@
+Use Slack CLI to read this [Slack thread](https://clanker-global.slack.com/archives/D0C6F49F2KD/p1791562946176759)\
+\
+issue: explain what this error is\
+\
+Target conversation:\
+\- Workspace: T0C6J1XCDE0\
+\- User: yyovil\
+\- Clanker: U0C5Z1ZQHQX\
+\- Conversation: yyovil’s DM with Clanker\
+\
+Use the existing configured Clanker bot credential securely, without printing it. Browser sessions do not select CLI identity.\
+\
+Verify auth.test returns:\
+\- team_id: T0C6J1XCDE0\
+\- user_id: U0C5Z1ZQHQX\
+\
+Resolve yyovil’s Slack user ID from the workspace directory. Do not assume Tanishq Palandurkar’s user ID belongs to yyovil.\
+\
+Resolve the DM channel from the thread link. Use conversations.info to confirm its participant is yyovil’s resolved user ID. If it belongs to someone else, stop and report the mismatch.\
+\
+Fetch the parent and every reply using conversations.replies, following pagination until complete.\
+\
+Keep Slack access read-only. Do not post, delete, or change permissions.
