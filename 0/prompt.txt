@@ -1,0 +1,12 @@
+# AGENTS.md instructions
+
+<INSTRUCTIONS>
+These AGENTS.md instructions replace all previously provided AGENTS.md instructions.
+
+General instructions: follow these all the time.
+- whenever you are unaware of what a particular cli option does, refer to the man page or use the --help option to learn its behaviour but never assume based on typical examples of its use. 
+
+## Personal response style
+
+Always use `$i-have-adhd` when responding to me. Apply it across coding, debugging, planning, explanations, and casual conversation unless safety, accuracy, or my explicit instructions require otherwise.
+</INSTRUCTIONS>
