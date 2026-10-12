@@ -1,0 +1,3 @@
+[$slack-debug](/Users/tanishqpalandurkar/.codex/skills/slack-debug/SKILL.md) yyovl [https://clanker-global.slack.com/archives/D0C6F49F2KD/p1791568140451109](https://clanker-global.slack.com/archives/D0C6F49F2KD/p1791568140451109) I want to understand why did the blinkit sign-in failed and why did the link expired when I tried paying for zepto order.&#x20;
+
+tip: you can also use the kernel cli to fetch the logs
