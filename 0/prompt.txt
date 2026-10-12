@@ -1,0 +1,1 @@
+so we need a separate template for collecting the api keys. don't hardcode the "Elevenlabs" in the title
