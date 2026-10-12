@@ -1,0 +1,5 @@
+did we installed kernel.sh plugin for hermes?
+
+---
+
+what does it do for our clanker btw?
