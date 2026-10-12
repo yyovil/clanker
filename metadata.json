@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 88,
+  "checkpoints_count": 90,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -12,6 +12,8 @@
     "docs/decisions/2026-10-05-hosted-credential-flow.md",
     "docs/decisions/2026-10-06-channel-login-detour.md",
     "docs/decisions/2026-10-06-payment-vault.md",
+    "docs/decisions/2026-10-06-phone-sms-login.md",
+    "docs/decisions/2026-10-06-slack-message-edits.md",
     "docs/decisions/2026-10-06-slack-task-acknowledgement.md",
     "docs/decisions/2026-10-06-vault-invitations.md",
     "hermes/.coderabbit.yaml",
@@ -7667,6 +7669,7 @@
     "hermes/plugins/platforms/slack/acknowledgement.py",
     "hermes/plugins/platforms/slack/adapter.py",
     "hermes/plugins/platforms/slack/block_kit.py",
+    "hermes/plugins/platforms/slack/message_edits.py",
     "hermes/plugins/platforms/slack/plugin.yaml",
     "hermes/plugins/platforms/sms/__init__.py",
     "hermes/plugins/platforms/sms/adapter.py",
@@ -10144,6 +10147,7 @@
     "hermes/tests/gateway/test_slack_log_noise.py",
     "hermes/tests/gateway/test_slack_mention.py",
     "hermes/tests/gateway/test_slack_mention_humanization.py",
+    "hermes/tests/gateway/test_slack_message_edits.py",
     "hermes/tests/gateway/test_slack_model_picker.py",
     "hermes/tests/gateway/test_slack_native_streaming.py",
     "hermes/tests/gateway/test_slack_pasted_tables.py",
@@ -15099,8 +15103,10 @@
     "patches/hermes/channel-task-return.patch",
     "patches/hermes/channel-task-routing.patch",
     "patches/hermes/codex-auxiliary-model-cooldown.patch",
+    "patches/hermes/phone-sms-login.patch",
     "patches/hermes/quiet-onboarding.patch",
     "patches/hermes/slack-acknowledgement.patch",
+    "patches/hermes/slack-message-edits.patch",
     "patches/hermes/slack-typing-lifecycle.patch",
     "runtime/cloud_browser/__init__.py",
     "runtime/cloud_browser/service.py",
@@ -15111,6 +15117,7 @@
     "runtime/vault/channel_control.py",
     "runtime/vault/channel_tasks.py",
     "runtime/vault/delegation.py",
+    "runtime/vault/login.py",
     "runtime/vault/page.html",
     "runtime/vault/payments.py",
     "runtime/vault/service.py",
@@ -15262,6 +15269,13 @@
       "compact_transcript": "/19/transcript.jsonl",
       "content_hash": "/19/content_hash.txt",
       "prompt": "/19/prompt.txt"
+    },
+    {
+      "metadata": "/20/metadata.json",
+      "transcript": "/20/full.jsonl",
+      "compact_transcript": "/20/transcript.jsonl",
+      "content_hash": "/20/content_hash.txt",
+      "prompt": "/20/prompt.txt"
     }
   ],
   "token_usage": {
