@@ -1,0 +1,1 @@
+alright so we have to improve the logging state of clanker so that we atleast get to know about the upstream errors. don't we? what's the standard practice when integrating a 3rd party service?
