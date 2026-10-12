@@ -1,0 +1,3 @@
+the task prompt is too specific and seems like its staged. no normal user would do that. 
+
+"book me a flight to BOM. departure 7th oct." should be it. if clanker needs additional info, it can ask me in the next turn
