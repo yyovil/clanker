@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_ckPlrhS2oTUekwZ0zjTSEa5y\",0]","question":"We already have Nagpur (NGP) and 7 October 2026. Should I tell Clanker it’s a one-way flight?","answer":"Yes, one-way"}]
+</send_user_message_question_reply>
