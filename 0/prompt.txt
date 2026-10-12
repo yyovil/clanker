@@ -1,0 +1,5 @@
+<environment_context>
+  <current_date>2026-10-10</current_date>
+  <timezone>Asia/Kolkata</timezone>
+  <filesystem><workspace_roots><root>/Users/tanishqpalandurkar/Projects/yyot</root><root>/Users/tanishqpalandurkar/.codex/visualizations/2026/10/08/01a11d35-1e62-7c50-8fbb-5185a31c7079</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
+</environment_context>
