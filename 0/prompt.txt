@@ -1,0 +1,1 @@
+ok so I want to find out about this "provider": "kernel" path of payment that's currently undocumented. how can we enable payments using this path? you can refer to the kernel's codebase for understanding how to do thig
