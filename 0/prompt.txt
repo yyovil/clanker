@@ -1,0 +1,1 @@
+so what does the end user would have to do? I don't want the end user to have to perform some extra step. It just have to submit his card details. that's it. rest we do automatically.
