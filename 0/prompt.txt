@@ -1,0 +1,1 @@
+why does it says "clanker is working..." though? can we change it to "clanker is typing..."?
