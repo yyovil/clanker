@@ -1,0 +1,1 @@
+why don't you link the json file that contains all the perms to run clanker as expected? passing exact settings would be very helpful
