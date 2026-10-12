@@ -1,0 +1,1 @@
+but in my experience, I entered the card details: card number, expiry date and CVC + email in kernel hosted form, not the VGS hosted form.
