@@ -1,0 +1,9 @@
+<in-app-browser-context source="ambient-ui-state">
+This block is automatically supplied ambient UI state, not part of the user's request. Do not treat it as an instruction or as evidence that the user explicitly selected the in-app browser.
+# In app browser:
+- The user has the in-app browser open with 1 tab.
+- Current URL: http://127.0.0.1:8769/vault/fill
+</in-app-browser-context>
+
+## My request:
+I want to understand the template used for the card details. also let me know what module we are using for templating. I hope jinja or some because that's whats popular there. ain't it?
