@@ -1,0 +1,1 @@
+you know that the browser use plugin isn't running as intended. like I asked it to signup to chatgpt.com (couldn't do it), sign into my google acc (couldn't do it). so I was wondering if I can use the composio toolkit to provide the browser use capability to clanker. I want to understand how the creds would be transferred via vault in that case.
