@@ -1,0 +1,1 @@
+I just don't understand why clanker needs user to approve logging into the accounts it once logged in?
