@@ -1,0 +1,1 @@
+put local setup and agent sessions at last. this makes access management the next thing after the benchmark
