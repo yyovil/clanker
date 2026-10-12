@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 154,
+  "checkpoints_count": 157,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -28,6 +28,7 @@
     "docs/decisions/2026-10-08-task-context-handoff.md",
     "docs/decisions/2026-10-08-task-continuation-recovery.md",
     "docs/decisions/2026-10-08-task-continuation.md",
+    "docs/decisions/2026-10-08-user-scoped-slack-recall.md",
     "hermes/.coderabbit.yaml",
     "hermes/.dockerignore",
     "hermes/.env.example",
@@ -5461,6 +5462,7 @@
     "hermes/gateway/media_repair.py",
     "hermes/gateway/memory_monitor.py",
     "hermes/gateway/memory_status.py",
+    "hermes/gateway/message_author.py",
     "hermes/gateway/message_timestamps.py",
     "hermes/gateway/mirror.py",
     "hermes/gateway/pairing.py",
@@ -9908,6 +9910,7 @@
     "hermes/tests/gateway/test_memory_monitor.py",
     "hermes/tests/gateway/test_memory_status.py",
     "hermes/tests/gateway/test_memory_trim_housekeeping.py",
+    "hermes/tests/gateway/test_message_author.py",
     "hermes/tests/gateway/test_message_deduplicator.py",
     "hermes/tests/gateway/test_message_timestamps.py",
     "hermes/tests/gateway/test_mirror.py",
@@ -15147,6 +15150,7 @@
     "runtime/seatbelt/plugin.yaml",
     "runtime/seatbelt/recover.py",
     "runtime/seatbelt/web_proxy.py",
+    "runtime/slack_recall.py",
     "runtime/slack_workspace.py",
     "runtime/vault/__init__.py",
     "runtime/vault/api.py",
@@ -15446,6 +15450,13 @@
       "compact_transcript": "/39/transcript.jsonl",
       "content_hash": "/39/content_hash.txt",
       "prompt": "/39/prompt.txt"
+    },
+    {
+      "metadata": "/40/metadata.json",
+      "transcript": "/40/full.jsonl",
+      "compact_transcript": "/40/transcript.jsonl",
+      "content_hash": "/40/content_hash.txt",
+      "prompt": "/40/prompt.txt"
     }
   ],
   "token_usage": {
