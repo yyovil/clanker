@@ -1,0 +1,1 @@
+so essentially the task for the backend is to remember where did the detour (continuing login privately in the DMs) takes place. so it has to remember, what user, what workspace, what channel, what thread. do I understand it right?
