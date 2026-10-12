@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_de72eb2a7b354948b9b2256a86fe4efe\",0]","question":"Which booking site and flight route/date should we use, and should the demo stop at checkout or buy a real ticket?","answer":"should stop at checkout."}]
+</send_user_message_question_reply>
