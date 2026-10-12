@@ -1,0 +1,1 @@
+does kernel has a concept of snapshots so that we can reuse the login cookies etc
