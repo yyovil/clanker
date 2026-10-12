@@ -1,0 +1,1 @@
+why do we need this in the home component? also show me empty vault state as well
