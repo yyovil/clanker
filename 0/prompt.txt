@@ -1,0 +1,12 @@
+<environment_context>
+  <current_date>2026-10-12</current_date>
+  <timezone>Asia/Kolkata</timezone>
+  <filesystem><workspace_roots><root>/Users/tanishqpalandurkar/Projects/yyot</root><root>/Users/tanishqpalandurkar/.codex/visualizations/2026/10/11/01a12b8f-bf17-7580-8e42-324bea65aac7</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
+  <subagents>
+    <agent name="/root/assignment_capability_audit" />
+    <agent name="/root/assignment_delivery_audit" />
+    <agent name="/root/audit_core_requirements" />
+    <agent name="/root/find_assignment_reference" />
+    <agent name="/root/scope_extras" />
+  </subagents>
+</environment_context>
