@@ -1,0 +1,1 @@
+I just want user to be able to enter their card details like acc no, cvv, name and expiry date and that's it. nothing else.
