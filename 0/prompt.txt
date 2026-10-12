@@ -1,0 +1,1 @@
+use the kernel cli for fetching the logs and then read the logs written by clanker (ain't nothing but a hermes agent under the hood)
