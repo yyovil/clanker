@@ -1,0 +1,1 @@
+don't target it for macos only
