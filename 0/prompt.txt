@@ -1,0 +1,1 @@
+I want to explore a slack experience where I ask clanker that I want to buy shorts like this (image for ref) and it presents me a carousel of shorts that are similar to the one I refered. what are the components here that I'd hv to get right first of all and feasibility of this experience when using slack
