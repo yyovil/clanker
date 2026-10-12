@@ -3,10 +3,11 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 48,
+  "checkpoints_count": 57,
   "files_touched": [
     ".gitignore",
     "docs/decisions/2026-10-05-composio-browser-vault.md",
+    "docs/decisions/2026-10-06-payment-vault.md",
     "hermes/.coderabbit.yaml",
     "hermes/.dockerignore",
     "hermes/.env.example",
@@ -15092,6 +15093,7 @@
     "runtime/seatbelt/plugin.py",
     "runtime/slack_workspace.py",
     "runtime/vault/page.html",
+    "runtime/vault/payments.py",
     "runtime/vault/service.py",
     "runtime/vault/store.py",
     "runtime/vault/tools.py",
@@ -15150,6 +15152,13 @@
       "compact_transcript": "/6/transcript.jsonl",
       "content_hash": "/6/content_hash.txt",
       "prompt": "/6/prompt.txt"
+    },
+    {
+      "metadata": "/7/metadata.json",
+      "transcript": "/7/full.jsonl",
+      "compact_transcript": "/7/transcript.jsonl",
+      "content_hash": "/7/content_hash.txt",
+      "prompt": "/7/prompt.txt"
     }
   ],
   "token_usage": {
