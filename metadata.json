@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 45,
+  "checkpoints_count": 48,
   "files_touched": [
     ".gitignore",
     "docs/decisions/2026-10-05-composio-browser-vault.md",
@@ -15083,6 +15083,7 @@
     "hermes/website/static/img/nous-logo.png",
     "hermes/website/static/oauth/client-metadata.json",
     "hermes/website/tsconfig.json",
+    "patches/hermes/api-key-vault.patch",
     "patches/hermes/quiet-onboarding.patch",
     "patches/hermes/slack-typing-lifecycle.patch",
     "runtime/cloud_browser/__init__.py",
@@ -15090,8 +15091,13 @@
     "runtime/cloud_browser/tools.py",
     "runtime/seatbelt/plugin.py",
     "runtime/slack_workspace.py",
+    "runtime/vault/page.html",
     "runtime/vault/service.py",
+    "runtime/vault/store.py",
     "runtime/vault/tools.py",
+    "runtime/vault/vault.css",
+    "runtime/vault/vault.js",
+    "runtime/vault/web.py",
     "scripts/apply-hermes-mods",
     "scripts/configure-clanker-style"
   ],
@@ -15137,6 +15143,13 @@
       "compact_transcript": "/5/transcript.jsonl",
       "content_hash": "/5/content_hash.txt",
       "prompt": "/5/prompt.txt"
+    },
+    {
+      "metadata": "/6/metadata.json",
+      "transcript": "/6/full.jsonl",
+      "compact_transcript": "/6/transcript.jsonl",
+      "content_hash": "/6/content_hash.txt",
+      "prompt": "/6/prompt.txt"
     }
   ],
   "token_usage": {
