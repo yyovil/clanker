@@ -1,0 +1,1 @@
+could you used its slack acc via slack api?
