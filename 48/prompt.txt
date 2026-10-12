@@ -1,0 +1,17 @@
+I want to assess how much space is consumed by the hermes profiles real quick. I saw we have got 40 some profiles on this bad boy
+
+---
+
+alright why we are using hermes profiles in clanker? for acc isolation right? so that when one user tasks clanker to do some browser thing, it doesn't pulls the context from the other user's profile. right?
+
+---
+
+yeah so keeping a profile for a user in a slack workspace makes sense. now the clanker slack workspace only has 3 members so why do we have more than 3 hermes profiles present?
+
+---
+
+why do we need a profile for shared-channel conversations? why we don't we have a profile at workspace level to share context cross channels and in the shared channel threads?
+
+---
+
+why do we need profiles for account-task execution?
