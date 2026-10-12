@@ -1,0 +1,17 @@
+if I were to share access to one of my acc with other person in my team, how would I do it in clanker? Now assume that I'm part of a team of size 100 and I have to share one diff account with other 100 colleagues and then during browsing clanker has to decide which browser profile to pick for this browsing task, the current design would become very brittle because it would have to find out which browser profile to pick. I don't know about others, but I personally would have 100 such contenders and then it would become a linear search. I don't like the current design
+
+---
+
+I still don't want to have the shared browser profile. can't we get rid of it totally and find a way for shared acc access or some?
+
+---
+
+we can have a team vault with per user (shared access) auth
+
+---
+
+walk me through a usecase scenario
+
+---
+
+hold on! everybody in the team would have access to the team vault? we then would need an admin there. won't we?
