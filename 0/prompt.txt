@@ -1,0 +1,6 @@
+```chat_selection
+agent_id: ea7b6153-3978-4f44-8b1c-fbcabfd98184
+selected_text:
+Oct 8: You said to drop your own vault and adopt Kernel's vault instead. The agent moved personal details into Kernel (KernelPersonalStore) but left the per-call re-read in place. That turned a free local read into about 15 sequential Kernel network requests per browser action, any one of which could fail the call.
+```
+ yeah so this is what I also refered in my last message. do we need this harness level redaction if we are using kernel's vault and credential typed entity for filling
