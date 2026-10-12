@@ -1,0 +1,7 @@
+<heartbeat>
+  <automation_id>restart-gateway-after-active-agents-finish</automation_id>
+  <current_time_iso>2026-10-08T22:03:22.234Z</current_time_iso>
+  <instructions>
+Monitor yyot chats 01a11d78-cbc3-7e71-9051-490699a87919 (Fix repeated Clanker sign-ins) and 01a11d74-8e2c-7b53-bd74-f2bffc814469 (Fix duplicate Clanker DM message). Confirm both current turns complete using list_threads and compact wait_threads snapshots. Stay quiet while either works. After both finish, inspect their final results and repository instructions in /Users/tanishqpalandurkar/Projects/yyot, confirm no other yyot Codex turn or live gateway agent is working, then restart the Clanker gateway using its supported service procedure. The user explicitly authorized the restart. Verify gateway health and report completion here, then pause this heartbeat. Report actionable failures. Do not send messages to other chats or Slack.
+  </instructions>
+</heartbeat>
