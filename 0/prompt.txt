@@ -1,0 +1,1 @@
+so if I enter my card details, would they be stored as credentials in the user's kernel vault?
