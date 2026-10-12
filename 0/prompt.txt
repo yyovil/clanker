@@ -1,0 +1,4 @@
+</system_reminder>
+<timestamp>Saturday, Oct 10, 2026, 5:50 PM (UTC+5:30)</timestamp>
+
+why is network_token_pending though? do we know the reason?
