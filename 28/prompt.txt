@@ -1,0 +1,17 @@
+is everything designed in the LG canvas built?
+
+---
+
+build it real quick
+
+---
+
+<in-app-browser-context source="ambient-ui-state">
+This block is automatically supplied ambient UI state, not part of the user's request. Do not treat it as an instruction or as evidence that the user explicitly selected the in-app browser.
+# In app browser:
+- The user has the in-app browser open with 1 tab.
+- Current URL: file:///Users/tanishqpalandurkar/Projects/yyot/runtime/vault/page.html
+</in-app-browser-context>
+
+## My request:
+where's the vault link?
