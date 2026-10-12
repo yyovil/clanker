@@ -1,0 +1,1 @@
+I'd just say: agent sessions used to build clanker are recorded using entire.io. that's it and keep the agent prompt plus the "To browse them..." line as it is
