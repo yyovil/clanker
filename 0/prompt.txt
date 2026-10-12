@@ -1,0 +1,1 @@
+alright run the rest of the benchmark with a batch size of 4 from now
