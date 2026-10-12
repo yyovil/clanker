@@ -1,0 +1,1 @@
+put a section: local setup and just mention the prompt that directs agent to the right doc and continue setting clanker up locally from there
