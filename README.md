@@ -37,7 +37,7 @@ Paste this into your coding agent:
 
 ## Agent sessions
 
-The coding-agent sessions used to build Clanker are public. They're recorded with [Entire](https://docs.entire.io/overview) and published in this repo as Git refs under `refs/entire/checkpoints/`: the prompts, responses, tool calls and files behind each change.
+Agent sessions used to build Clanker are recorded using [entire.io](https://entire.io).
 
 To browse them or ask about the development process, paste this into your coding agent:
 
