@@ -2,7 +2,7 @@
 
 12/12 original scripts exercised and assessed; 29/29 prescribed follow-ups posted. 11/12 tasks fully completed. QA verdicts: 1 blocked, 6 fail, 5 pass.
 
-Run window: 2026-10-12 02:15:14 IST to 2026-10-12 04:43:48 IST. The [original benchmark](CLANKER_BENCHMARK.md) was unchanged. [Previous rerun evidence](CLANKER_BENCHMARK_RUN_2026-10-12.md) remains available.
+Run window: 2026-10-12 02:15:14 IST to 2026-10-12 04:43:48 IST. The [original benchmark](CLANKER_BENCHMARK.md) was unchanged.
 
 ## Conditions and limits
 
@@ -11,7 +11,7 @@ Run window: 2026-10-12 02:15:14 IST to 2026-10-12 04:43:48 IST. The [original be
 - Fresh Slack roots were used while existing merchant accounts, bags, repositories and saved-login state were retained. This was not a clean-account reset or a controlled A/B comparison. Preexisting bag items in Tasks 1 and 4 and the existing private repository in Task 6 are assessed from their actual evidence.
 - Replay consists of bounded native Kernel clips around browser commands. The original capture policy excluded login, credential/OTP/card fields, saved-value entry, arbitrary console code and unreviewed pages/actions. The owner later authorized publication of personal account/contact/order and delivery-location footage; 22 withheld downloaded clips and six recovered quarantined clips passed the subsequent review and are included. Original capture ledgers and gaps remain unchanged.
 - Telemetry enables connection, system and captcha categories. Page, control, platform, network, console, interaction and screenshot categories are disabled. Managed Auth browsers are excluded.
-- Capture operations run synchronously on the browser-tool execution path. Ledger intervals combine recording, browser actions and probes; other tool-message intervals combine preparation, export and message overhead. No isolated timers or A/B control establish how much of the progress silence came from capture or model behavior. [Scoped timing audit](../assets/benchmark/2026-10-12-corrected/capture-timing.json) covers only Tasks 1 and 5.
+- Capture operations run synchronously on the browser-tool execution path. Ledger intervals combine recording, browser actions and probes; other tool-message intervals combine preparation, export and message overhead. No isolated timers or A/B control establish how much of the progress silence came from capture or model behavior. A scoped timing audit covers only Tasks 1 and 5.
 - The frozen [capture adapter](../runtime/cloud_browser/kernel_replay.py) applies capture-tool and reviewed-URL limits to recording. Excluded editing calls and calls on unreviewed pages are forwarded with their original arguments; its privacy probe reads the DOM and location without navigation, reset or focus changes. These recording limits do not restrict editing, while their synchronous checking cost remains unmeasured.
 - Screenshots are actual Slack viewport crops from the corresponding tester account. Private values and access cards are excluded from published pixels.
 - Saved-session reuse does not establish a fresh authenticator challenge or submission. Human intervention and functional completion are recorded separately.
@@ -20,11 +20,11 @@ Run window: 2026-10-12 02:15:14 IST to 2026-10-12 04:43:48 IST. The [original be
 
 ## Comparison with the earlier replay rerun
 
-The [retained earlier rerun](CLANKER_BENCHMARK_RUN_2026-10-12.md) used yyovil as the primary actor for all twelve tasks, moving Tasks 1–3 and 8–12 away from their original Tanishq assignment. That changed the saved account/session and document ownership context. It also reached four overlapping scenario lifetimes under the same primary owner, despite that profile allowing only one browser writer. The corrected run restores the original actors and allows one active scenario per participant, with four jobs scheduled and at most two active.
+The earlier rerun used yyovil as the primary actor for all twelve tasks, moving Tasks 1–3 and 8–12 away from their original Tanishq assignment. That changed the saved account/session and document ownership context. It also reached four overlapping scenario lifetimes under the same primary owner, despite that profile allowing only one browser writer. The corrected run restores the original actors and allows one active scenario per participant, with four jobs scheduled and at most two active.
 
 These are verified harness differences. The runs do not form a controlled A/B comparison of model behavior or replay overhead; the functional outcomes and QA defects below remain separate.
 
-The final [requester-scoped runtime audit](../assets/benchmark/2026-10-12-corrected/runtime-flags-audit.json) examined 304 recorded tool results: 0 ProfileBusy/profile-lock failure(s), 0 provider transport timeout failure(s), and 0 binding/classification gap(s). Counts cover surfaced failure outcomes in exact owner traces; successful internal retries and isolated capture overhead are outside these counts.
+The final requester-scoped runtime audit examined 304 recorded tool results: 0 ProfileBusy/profile-lock failure(s), 0 provider transport timeout failure(s), and 0 binding/classification gap(s). Counts cover surfaced failure outcomes in exact owner traces; successful internal retries and isolated capture overhead are outside these counts.
 
 ## Results
 
@@ -47,9 +47,7 @@ The final [requester-scoped runtime audit](../assets/benchmark/2026-10-12-correc
 
 Fixture SHA-256: `65b6905f2d85c7007b82dc857b0460a98fe207c83bf49ea51a098c2ef5fd61e7`. Every stored opening/follow-up matched the original fixture, and every posted opening and prescribed follow-up matched the actual Slack transcript, including the stop interrupt. All 29 prescribed follow-ups were sent under their canonical participants.
 
-Capture support passed 310 focused checks with 8 expected failures before activation. Activated source hashes remained unchanged. Videos passed decode and representative frame review; screenshots were visually reviewed. Exact run/thread/resource attribution, hashes and per-session coverage gaps are in the [manifest](../assets/benchmark/2026-10-12-corrected/manifest.json).
-
-[Download 2× task replays](../assets/benchmark/2026-10-12-corrected/replays.zip) · [Download all original source clips](../assets/benchmark/2026-10-12-corrected/source-clips.zip) · [Telemetry confirmation](../assets/benchmark/2026-10-12-corrected/telemetry.json)
+Capture support passed 310 focused checks with 8 expected failures before activation. Activated source hashes remained unchanged. Videos passed decode and representative frame review; screenshots were visually reviewed.
 
 ## Human interventions and recovery answers
 
@@ -59,7 +57,7 @@ Capture support passed 310 focused checks with 8 expected failures before activa
 
 ## Replay coverage and exclusions
 
-On 12 October 2026, the owner authorized public release of personal account/contact/order and saved delivery-location footage. All 56 available source clips are now included: the original 28, 22 previously withheld downloads, and all six subsequently recovered provider recordings. [Publication record](../assets/benchmark/2026-10-12-corrected/publication-consent.json) · [Recovery record](../assets/benchmark/2026-10-12-corrected/quarantine-recovery-publication.json).
+On 12 October 2026, the owner authorized public release of personal account/contact/order and saved delivery-location footage. All 56 available source clips are included in the task replays below: the original 28, 22 previously withheld downloads, and all six subsequently recovered provider recordings.
 
 Eight task videos stitch each task’s clips in ascending exact capture timestamp order with 4× speed baked into playback. Every source clip appears exactly once in its own task video. Original source MP4s are retained. Uncaptured intervals are omitted; composition does not extend visible coverage. Tasks 9–12 have no source footage, so no video was created for them.
 
