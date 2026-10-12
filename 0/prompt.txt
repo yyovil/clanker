@@ -1,0 +1,1 @@
+what if we rm the redaction altogethere from clanker. why it is needed anyways? also if this would improve the clankers browsing speed because it doesn't hve to wait 22-56s because of current harness design, then it'd be fucking amazing
