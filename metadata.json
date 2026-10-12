@@ -1,0 +1,19 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "01M4R6JYRP2MAFMD6FV3YGT4ZW",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 15,
+  "files_touched": [
+    "assets/clanker-social-preview.png"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}

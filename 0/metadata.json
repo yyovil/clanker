@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "01M4R6JYRP2MAFMD6FV3YGT4ZW",
+  "session_id": "01a12c4d-de9c-79f2-8e05-8bfc422da637",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-12T13:59:45.666473Z",
+  "branch": "main",
+  "checkpoints_count": 15,
+  "files_touched": [
+    "assets/clanker-social-preview.png"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6.1-sol",
+  "turn_id": "8e574f48f885",
+  "checkpoint_transcript_start": 8593,
+  "transcript_lines_at_start": 8593,
+  "compact_transcript_start": 949,
+  "session_metrics": {
+    "turn_count": 15
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-12T13:59:45.21917Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 0,
+    "total_lines_changed": 0,
+    "agent_percentage": 0,
+    "metric_version": 2
+  }
+}
