@@ -1,0 +1,1 @@
+so the way that I wanted to do this is that the agent auto-generates the authentication codes or TOTP here after it has my authenticator setup key. that's it. I don't want to supply the key to him.
