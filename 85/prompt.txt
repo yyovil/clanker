@@ -1,0 +1,9 @@
+how many tokens I've spent on yyot till this date? use ccusage to estimate the API cost as well
+
+---
+
+can we get to know what models did I used here and its TPS as well?
+
+---
+
+could you tell cumulatively how much time did I spent here?
