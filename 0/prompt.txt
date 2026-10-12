@@ -1,0 +1,1 @@
+alright why we are using hermes profiles in clanker? for acc isolation right? so that when one user tasks clanker to do some browser thing, it doesn't pulls the context from the other user's profile. right?
