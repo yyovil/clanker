@@ -1,0 +1,1 @@
+alright perform the setup changes. if you need to mk changes in the slack app, use the iab because it has the account that created the slack app. otherwise use th aside cli and mcp instead of cua which is terribly slow
