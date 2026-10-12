@@ -1,0 +1,1 @@
+I want you to refer to Kernel.sh documentation and tell me how I can save on costs if I'm not using live preview. Does it make any difference? Does it make any difference to use the browser in headful or headless mode? If all I want to do is build browser agent, that is what Clanker is actually.
