@@ -1,0 +1,8 @@
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/docs/SETUP_PROMPT.md (lines 13-14)
+Node.js, Browser Use,
+agent-browser, and Chromium are not prerequisites for hosted browsin
+
+## My request:
+why the fuck would you mention this in the setup bruh?
