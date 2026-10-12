@@ -1,0 +1,2 @@
+can I use kernel's fill api with any other vault provider as well like I saw krnl vault supports 1password as well?
+if that's ok, we can save the card in the 1password's vault on behalf of the user and then use the fill api to put the card details into the checkout form securely and mk the payment on behalf of the users?
