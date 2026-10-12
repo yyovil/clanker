@@ -1,0 +1,112 @@
+{
+  "_metadata": {
+    "major_version": 1,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "clanker",
+    "description": "your personal AI assistant for your digital work in a browser",
+    "background_color": "#1a1a2e"
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "clanker",
+      "always_online": true
+    },
+    "agent_view": {
+      "agent_description": "Chat with clanker in Slack Messages."
+    },
+    "slash_commands": [
+      {
+        "command": "/hermes",
+        "description": "Talk to clanker or run an upstream subcommand",
+        "should_escape": false,
+        "url": "https://hermes-agent.local/slack/commands",
+        "usage_hint": "[subcommand] [args]"
+      },
+      {
+        "command": "/help",
+        "description": "Show available commands",
+        "should_escape": false,
+        "url": "https://hermes-agent.local/slack/commands"
+      },
+      {
+        "command": "/stop",
+        "description": "Stop running work",
+        "should_escape": false,
+        "url": "https://hermes-agent.local/slack/commands"
+      }
+    ],
+    "unfurl_domains": [
+      "clanker-preview.pages.dev"
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "assistant:write",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "commands",
+        "files:read",
+        "files:write",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "links.embed:write",
+        "links:read",
+        "mpim:history",
+        "mpim:read",
+        "reactions:read",
+        "reactions:write",
+        "users:read"
+      ],
+      "user": [
+        "chat:write",
+        "channels:history",
+        "channels:read",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "files:read",
+        "reactions:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_context_changed",
+        "app_home_opened",
+        "app_mention",
+        "link_shared",
+        "team_join",
+        "user_change",
+        "member_joined_channel",
+        "member_left_channel",
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim",
+        "reaction_added",
+        "reaction_removed"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

@@ -1,0 +1,19 @@
+--- a/hermes/gateway/session.py
++++ b/hermes/gateway/session.py
+@@ -298,11 +298,12 @@
+     "loaded tools actually expose."
+ )
+ _SLACK_NO_TOOLS_NOTE = (
+-    "**Platform notes:** You are running inside Slack. You do NOT have access to "
+-    "Slack-specific APIs — you cannot search channel history, pin/unpin messages, manage "
+-    "channels, or list users. Do not promise to perform these actions. The gateway may "
++    "**Platform notes:** You are running inside Slack. Native Slack administration tools "
++    "are not loaded. Consult the available plugin tool schemas for supported conversation "
++    "lookup or task handoff; do not claim a capability is unavailable before checking them. "
++    "Do not promise operations absent from the loaded tools. The gateway may "
+     "inline the current message's Slack block/attachment payload when available, but you "
+-    "still cannot call Slack APIs yourself."
++    "can use only the Slack operations exposed by the loaded tools."
+ )
+ 
+ 

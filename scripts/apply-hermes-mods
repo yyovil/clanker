@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Apply the clanker modifications only to the audited Hermes pin."""
+from pathlib import Path
+import hashlib
+import json
+import shutil
+import subprocess
+import re
+import tempfile
+
+root = Path(__file__).resolve().parents[1]
+upstream = root / 'hermes'
+pin = 'f97608f178d1ffeca59860195ab7da295f7c8e5f'
+patches = [root / 'patches/hermes/slack-workspace-membership.patch', root / 'patches/hermes/nat64-url-safety.patch', root / 'patches/hermes/slack-unfurl-admission-race.patch', root / 'patches/hermes/hosted-vault.patch', root / 'patches/hermes/api-key-vault.patch', root / 'patches/hermes/payment-vault.patch', root / 'patches/hermes/slack-typing-lifecycle.patch', root / 'patches/hermes/quiet-onboarding.patch', root / 'patches/hermes/slack-acknowledgement.patch', root / 'patches/hermes/codex-auxiliary-model-cooldown.patch']
+patches.append(root / 'patches/hermes/channel-task-return.patch')
+patches.append(root / 'patches/hermes/slack-message-edits.patch')
+patches.append(root / 'patches/hermes/phone-sms-login.patch')
+patches.append(root / 'patches/hermes/task-context-handoff.patch')
+patches.append(root / 'patches/hermes/recalled-task-context.patch')
+patches.append(root / 'patches/hermes/task-continuation.patch')
+patches.append(root / 'patches/hermes/task-continuation-recovery.patch')
+patches.append(root / 'patches/hermes/message-author-recall.patch')
+patches.append(root / 'patches/hermes/clanker-identity.patch')
+patches.append(root / 'patches/hermes/clanker-persona-placement.patch')
+patches.append(root / 'patches/hermes/kernel-fail-closed.patch')
+patches.append(root / 'patches/hermes/slack-reply-recipient-mentions.patch')
+patches.append(root / 'patches/hermes/slack-plugin-capability-note.patch')
+patches.append(root / 'patches/hermes/local-vault-removal.patch')
+patches.append(root / 'patches/hermes/private-access-response.patch')
+patches.append(root / 'patches/hermes/gateway-request-text.patch')
+patches.append(root / 'patches/hermes/api-human-bot-metadata.patch')
+baseline = json.loads((root / 'config/hermes-baseline.json').read_text())
+if baseline['commit'] != pin or hashlib.sha256((upstream / 'uv.lock').read_bytes()).hexdigest() != baseline['uv_lock_sha256']:
+    raise SystemExit('Hermes pin differs; review/rebase the patch before applying.')
+def installed_stack():
+    # Later patches extend earlier new files. Verify their complete reverse
+    # stack in scratch space instead of rejecting the installed earlier patch.
+    paths = set()
+    for patch in patches:
+        paths.update(re.findall(r'^(?:--- a/|\+\+\+ b/)([^\n]+)$',patch.read_text(),re.M))
+    with tempfile.TemporaryDirectory(prefix='clanker-installed-patches-') as temporary:
+        stage = Path(temporary)
+        for path in paths:
+            if (root/path).is_file():
+                target = stage/path
+                target.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copy2(root/path,target)
+        for patch in reversed(patches):
+            result = subprocess.run(['git','apply','--reverse',str(patch)],cwd=stage,capture_output=True)
+            if result.returncode:return False
+    return True
+
+patches.append(root / 'patches/hermes/profile-notification-interval.patch')
+patches.append(root / 'patches/hermes/browser-live-owner-cleanup.patch')
+patches.append(root / 'patches/hermes/stop-progress-status.patch')
+patches.append(root / 'patches/hermes/codex-sol-reasoning.patch')
+patches.append(root / 'patches/hermes/browser-vision-capture-scope.patch')
+patches.append(root / 'patches/hermes/native-screenshot-delivery.patch')
+patches.append(root / 'patches/hermes/browser-command-timeout-outcome.patch')
+patches.append(root / 'patches/hermes/clanker-profile-bootstrap-worker.patch')
+
+for patch in ([] if installed_stack() else patches):
+    check = subprocess.run(['git', 'apply', '--check', str(patch)], cwd=root, capture_output=True)
+    if check.returncode == 0:
+        subprocess.run(['git', 'apply', str(patch)], cwd=root, check=True)
+    else:
+        reverse = subprocess.run(['git', 'apply', '--reverse', '--check', str(patch)], cwd=root, capture_output=True)
+        if reverse.returncode:
+            raise SystemExit('Upstream has conflicting edits; refusing to overwrite them: ' + str(patch))
+for source, destination in [
+    (root / 'runtime/slack_workspace.py', upstream / 'gateway/slack_workspace.py'),
+    (root / 'verification/probes/test_slack_workspace_membership.py', upstream / 'tests/gateway/test_slack_workspace_membership.py'),
+]:
+    if destination.exists() and destination.read_bytes() != source.read_bytes():
+        if source == root / 'runtime/slack_workspace.py':
+            routing = root / 'patches/hermes/channel-task-routing.patch'
+            check = subprocess.run(['git','apply','--check',str(routing)],cwd=root,capture_output=True)
+            if check.returncode==0:
+                subprocess.run(['git','apply',str(routing)],cwd=root,check=True)
+        if destination.read_bytes()!=source.read_bytes():
+            raise SystemExit(f'{destination} differs; review it before replacing.')
+    shutil.copy2(source, destination)
+print('Clanker mods, including isolated channel tasks and private login detours, applied to the pinned Hermes checkout.')

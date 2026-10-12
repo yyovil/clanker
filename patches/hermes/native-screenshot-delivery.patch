@@ -1,0 +1,76 @@
+--- a/hermes/tools/browser_tool.py
++++ b/hermes/tools/browser_tool.py
+@@ -587,8 +587,8 @@
+                 },
+                 "full_page": {
+                     "type": "boolean",
+-                    "default": True,
+-                    "description": "Capture the full scrollable page (default). Set false to capture only the current viewport when comparing visible rendering. Viewport selection is unsupported by Camofox."
++                    "default": False,
++                    "description": "Capture the current visible viewport (default). Set true only when the full scrollable document is needed; full-page capture can differ from visible rendering. Camofox preserves its backend default when omitted and does not support explicit viewport selection."
+                 }
+             },
+             "required": ["question"]
+@@ -1211,7 +1211,7 @@
+ from tools import browser_tool_vision as _vision
+ 
+ 
+-def _capture_vision_screenshot(effective_task_id: str, annotate: bool, screenshot_path: Path, lp_prerouted: bool, full_page: bool = True):
++def _capture_vision_screenshot(effective_task_id: str, annotate: bool, screenshot_path: Path, lp_prerouted: bool, full_page: bool = False):
+     """Take (or adopt the pre-routed) screenshot; returns ``(result, path, error_json_or_None)``."""
+     if lp_prerouted and screenshot_path.exists():
+         result = _lp._annotate_lightpanda_fallback(
+@@ -1238,14 +1238,18 @@
+     return result, screenshot_path, None
+ 
+ 
+-def browser_vision(question: str, annotate: bool = False, task_id: Optional[str] = None, full_page: bool = True) -> Union[str, Dict[str, Any]]:
++def browser_vision(question: str, annotate: bool = False, task_id: Optional[str] = None, full_page: Optional[bool] = None) -> Union[str, Dict[str, Any]]:
+     """Screenshot the current page for visual inspection. Native-vision models get the image
+     attached to the conversation; otherwise the auxiliary vision model returns a text
+     analysis. The file is kept and its path returned (MEDIA:<path>)."""
+     if _is_camofox_mode():
+-        if not full_page:
++        if full_page is False:
+             return _dumps(_err("Camofox does not support selecting viewport-only screenshots."))
+         return _camofox("camofox_vision", question, annotate, task_id)
++    # Preserve the legacy Camofox route when omitted; native capture defaults
++    # to the visible viewport without changing the page or replaying actions.
++    if full_page is None:
++        full_page = False
+ 
+     import uuid as uuid_mod
+     from hermes_constants import get_hermes_dir
+@@ -1329,7 +1333,7 @@
+     ("browser_back", "◀️", None, {}),
+     ("browser_press", "⌨️", None, {"key": ""}),
+     ("browser_get_images", "🖼️", _install.check_browser_requirements, {}),
+-    ("browser_vision", "👁️", _install.check_browser_vision_requirements, {"question": "", "annotate": False, "full_page": True}),
++    ("browser_vision", "👁️", _install.check_browser_vision_requirements, {"question": "", "annotate": False, "full_page": None}),
+     ("browser_console", "🖥️", _install.check_browser_requirements, {"clear": False, "expression": None}),
+ )
+ 
+--- a/hermes/tools/browser_tool_vision.py
++++ b/hermes/tools/browser_tool_vision.py
+@@ -21,7 +21,7 @@
+ 
+ def _lightpanda_vision_preroute(
+     effective_task_id: str, annotate: bool, screenshot_path: Path,
+-    *, full_page: bool = True,
++    *, full_page: bool = False,
+ ) -> Tuple[bool, Optional[str], Path]:
+     """Capture the vision screenshot via the Chrome fallback when Lightpanda is the engine
+     (it has no graphical renderer). Returns ``(prerouted, fallback_warning, path)``;
+@@ -79,7 +79,11 @@
+         meta["fallback_warning"] = lp_fallback_warning
+     if annotate and result.get("data", {}).get("annotations"):
+         meta["annotations"] = result["data"]["annotations"]
+-    native_result["text_summary"] = f"{native_result.get('text_summary', '')} Screenshot path: {screenshot_path}".strip()
++    attachment = f"Screenshot path: {screenshot_path}\nTo share this captured image when requested, include MEDIA:{screenshot_path} in your response."
++    # Native vision receives content rather than text_summary/meta. Keep the
++    # existing file handle alongside its pixels on both delivery paths.
++    native_result['content'].append({'type': 'text', 'text': attachment})
++    native_result["text_summary"] = f"{native_result.get('text_summary', '')}\n{attachment}".strip()
+     return native_result
+ 
+ 

@@ -1,0 +1,162 @@
+diff --git a/hermes/tools/browser_tool_session.py b/hermes/tools/browser_tool_session.py
+--- a/hermes/tools/browser_tool_session.py
++++ b/hermes/tools/browser_tool_session.py
+@@ -313,7 +313,7 @@
+ 
+ 
+ def _create_cloud_session_or_fallback(task_id: str, provider) -> Dict[str, Any]:
+-    """Cloud session; fall back to local Chromium (marked degraded) on failure. ``cdp_url``
++    """Cloud session; permit local fallback only when the profile allows it. ``cdp_url``
+     is resolved here because some providers return an HTTP discovery URL, not a websocket."""
+     try:
+         session_info = provider.create_session(task_id)
+@@ -325,6 +325,8 @@
+         return session_info
+     except Exception as e:
+         provider_name = type(provider).__name__
++        if not _allow_local_fallback():
++            raise RuntimeError(f"Cloud provider {provider_name} failed ({e}); local fallback is disabled") from e
+         _bt.logger.warning("Cloud provider %s failed (%s); attempting fallback to local Chromium for task %s",
+                            provider_name, e, task_id, exc_info=True)
+         try:
+@@ -338,6 +340,11 @@
+         return session_info
+ 
+ 
++def _allow_local_fallback() -> bool:
++    """Read per profile at creation time so routed conversations cannot share this policy."""
++    return _bt._browser_cfg("allow_local_fallback", True, bool, "browser.allow_local_fallback from config")
++
++
+ def _create_session_for_key(task_id: str, force_local: bool) -> Dict[str, Any]:
+     """Fresh session for ``task_id`` (runs OUTSIDE the lock: cloud mode makes a network call).
+     Precedence: CDP override > hybrid local sidecar (never real-profile) > cloud > local."""
+@@ -348,6 +355,13 @@
+         return _create_local_session(task_id, allow_real_profile=False)
+     provider = _cloud._get_cloud_provider()
+     if provider is None:
++        if not _allow_local_fallback():
++            from tools.tool_backend_helpers import normalize_browser_cloud_provider
++
++            selected = _bt._browser_cfg("cloud_provider", "", normalize_browser_cloud_provider,
++                                       "browser.cloud_provider from config")
++            if selected and selected not in ("local", "camofox"):
++                raise RuntimeError(f"Cloud provider '{selected}' could not be resolved; local fallback is disabled")
+         return _create_local_session(task_id)
+     return _create_cloud_session_or_fallback(task_id, provider)
+ 
+diff --git a/hermes/hermes_cli/config_defaults.py b/hermes/hermes_cli/config_defaults.py
+--- a/hermes/hermes_cli/config_defaults.py
++++ b/hermes/hermes_cli/config_defaults.py
+@@ -411,6 +411,8 @@
+         # headed: visible Chromium window (local); skips per-turn cleanup, idle reaper still applies
+         "headed": False,
+         "allow_private_urls": False,  # allow private/internal IPs (localhost, 192.168.x.x, ...)
++        # Fail closed on cloud creation/CDP failures when false; default retains local recovery.
++        "allow_local_fallback": True,
+         # Local browser engine for both drivers. "auto" = Chrome; "lightpanda" = faster navigation,
+         # no screenshots (Browser Use mode spawns `lightpanda serve` per session; built-in tools
+         # pass `--engine <value>` to agent-browser with Chrome fallback); "chrome" = explicit.
+diff --git a/hermes/tests/tools/test_browser_cloud_fallback.py b/hermes/tests/tools/test_browser_cloud_fallback.py
+--- a/hermes/tests/tools/test_browser_cloud_fallback.py
++++ b/hermes/tests/tools/test_browser_cloud_fallback.py
+@@ -69,3 +69,73 @@
+ 
+         assert session["fallback_from_cloud"] is True
+         assert "invalid session" in session["fallback_reason"]
++
++    @pytest.mark.parametrize("allow_fallback", [False, True])
++    @pytest.mark.parametrize("failure", ["create", "invalid", "cdp"])
++    def test_profile_policy_controls_creation_and_cdp_failure(
++        self, tmp_path, monkeypatch, allow_fallback, failure
++    ):
++        """A cloud failure obeys the profile's policy before creating any local browser."""
++        _reset_session_state(monkeypatch)
++        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++        (tmp_path / "config.yaml").write_text(
++            f"browser:\n  allow_local_fallback: {str(allow_fallback).lower()}\n",
++            encoding="utf-8",
++        )
++        provider = Mock()
++        if failure == "create":
++            provider.create_session.side_effect = RuntimeError("provider unavailable")
++        elif failure == "invalid":
++            provider.create_session.return_value = None
++        else:
++            provider.create_session.return_value = {"cdp_url": "https://cloud.example.test/cdp"}
++            monkeypatch.setattr(
++                "tools.browser_tool_cdp._resolve_cdp_override",
++                Mock(side_effect=RuntimeError("CDP discovery unavailable")),
++            )
++        monkeypatch.setattr(bt_cloud, "_get_cloud_provider", lambda: provider)
++        monkeypatch.setattr("tools.browser_tool_cdp._get_cdp_override", lambda: None)
++        local = Mock(return_value={"features": {"local": True}, "cdp_url": None})
++        monkeypatch.setattr(bt_session, "_create_local_session", local)
++
++        if allow_fallback:
++            result = bt_session._get_session_info("policy-task")
++            local.assert_called_once_with("policy-task")
++            assert result["fallback_from_cloud"] is True
++            assert result["fallback_provider"] == type(provider).__name__
++            assert result["features"]["local"] is True
++        else:
++            with pytest.raises(RuntimeError, match="local fallback is disabled"):
++                bt_session._get_session_info("policy-task")
++            local.assert_not_called()
++            assert "policy-task" not in browser_tool._active_sessions
++
++    @pytest.mark.parametrize("allow_fallback", [False, True])
++    def test_profile_policy_controls_explicit_provider_resolution_failure(
++        self, tmp_path, monkeypatch, allow_fallback
++    ):
++        """A failed registered provider factory cannot silently select local when disabled."""
++        _reset_session_state(monkeypatch)
++        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++        (tmp_path / "config.yaml").write_text(
++            "browser:\n  cloud_provider: test-cloud\n"
++            f"  allow_local_fallback: {str(allow_fallback).lower()}\n",
++            encoding="utf-8",
++        )
++        monkeypatch.setattr(bt_cloud, "_ensure_browser_plugins_loaded", lambda: None)
++        factory = Mock(side_effect=RuntimeError("provider factory unavailable"))
++        monkeypatch.setattr(bt_cloud, "_registry_get_browser_provider", factory)
++        monkeypatch.setattr("tools.browser_tool_cdp._get_cdp_override", lambda: None)
++        local = Mock(return_value={"features": {"local": True}, "cdp_url": None})
++        monkeypatch.setattr(bt_session, "_create_local_session", local)
++
++        if allow_fallback:
++            result = bt_session._get_session_info("resolution-task")
++            local.assert_called_once_with("resolution-task")
++            assert result["features"]["local"] is True
++        else:
++            with pytest.raises(RuntimeError, match="local fallback is disabled"):
++                bt_session._get_session_info("resolution-task")
++            local.assert_not_called()
++            assert "resolution-task" not in browser_tool._active_sessions
++        factory.assert_called_once_with("test-cloud")
+diff --git a/hermes/website/docs/user-guide/features/browser.md b/hermes/website/docs/user-guide/features/browser.md
+--- a/hermes/website/docs/user-guide/features/browser.md
++++ b/hermes/website/docs/user-guide/features/browser.md
+@@ -68,6 +68,22 @@
+ :::note Selecting the provider
+ The `.env` keys above supply **credentials only**. The active cloud browser is chosen by the `browser.cloud_provider` selection written by `hermes tools` → Browser Automation (`browserbase`, `browser-use`, `camofox`, or `nous` for the Nous Subscription). Once a selection exists, adding or removing a key does not switch providers — and a selected provider with a missing key errors with guidance to run `hermes tools` instead of silently rerouting. Never-configured setups still autodetect from available credentials.
+ :::
++
++### Cloud failure recovery
++
++Hermes falls back to local Chromium if a cloud provider cannot create a session
++or resolve its CDP endpoint. To require the selected cloud provider, set:
++
++```yaml
++browser:
++  allow_local_fallback: false
++```
++
++With this setting, cloud creation and resolution failures return an error before
++launching local Chromium. The default is `true`. This controls failure recovery;
++the [private URL sidecar](#hybrid-routing-cloud-for-public-urls-local-for-lanlocalhost)
++has its own `auto_local_for_private_urls` setting, and explicitly selected local
++or CDP browsers remain available.
+ 
+ ### Browser Use mode (default)
+ 

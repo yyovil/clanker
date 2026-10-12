@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""Preview one unacknowledged Kernel creation; apply only while its gateway is stopped.
+
+This operator command is intentionally fixed to the evidenced offsite task. It
+never creates/deletes remote browsers or sends Slack messages. The filesystem
+lock excludes other operators; stopping the gateway excludes runtime writers.
+"""
+import argparse
+from contextlib import closing
+from datetime import datetime, timezone
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sqlite3
+import sys
+import tempfile
+import uuid
+
+ROOT = Path(__file__).resolve().parents[1]
+PYTHON = ROOT / '.local/hermes-lab/venv/bin/python'
+if Path(sys.prefix).resolve() != (ROOT / '.local/hermes-lab/venv').resolve():
+    os.execv(str(PYTHON), [str(PYTHON), __file__, *sys.argv[1:]])
+sys.path[:0] = [str(ROOT / 'runtime'), str(ROOT / 'hermes')]
+from dotenv import dotenv_values
+import requests
+from gateway.status import live_gateway_pid_for_home
+
+TASK = 'd952b264bd88c41f684dc5a1e9350726'
+ENTRY = '1a41ef82df2426913fbd17d7'
+EXPECTED_CONTEXT = '27a4110e168bc4ee081bf22cfe986c45f679f02de7169dbf0d7fc8dcd5f1856c'
+PREFIX = 'hermes_clanker-' + ENTRY + '_'
+
+
+class ReconciliationError(Exception):
+    pass
+
+
+def fail(message):
+    raise ReconciliationError(message)
+
+
+def safe_path(home,path):
+    if not path.is_relative_to(home) or path.is_symlink():
+        fail('A protected path is outside the gateway home or is a symlink.')
+    for parent in path.parents:
+        if parent==home:
+            break
+        if parent.is_symlink():
+            fail('A protected path contains a symlink.')
+
+
+def digest(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+def private_write(path,value):
+    path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+    fd,temp = tempfile.mkstemp(prefix='.'+path.name+'.',dir=path.parent)
+    try:
+        with os.fdopen(fd,'wb') as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp,path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def quiescence(home,apply):
+    status = json.loads((home/'gateway_state.json').read_text())
+    if status.get('active_agents')!=0:
+        fail('Gateway active_agents must be exactly zero.')
+    pid = live_gateway_pid_for_home(home)
+    if apply and pid is not None:
+        fail('Stop the gateway completely before applying; an idle snapshot does not exclude new tasks.')
+    if apply and status.get('gateway_state')!='stopped':
+        fail('A stopped gateway status is required before applying.')
+    return {'gateway_running':pid is not None,'active_agents':0,
+            'gateway_state':status.get('gateway_state')}
+
+
+def authenticated_state(home):
+    db_path = home/'.clanker-vault/requests.sqlite'
+    safe_path(home,db_path)
+    with closing(sqlite3.connect(db_path.as_uri()+'?mode=ro',uri=True)) as db:
+        db.row_factory = sqlite3.Row
+        row = db.execute('SELECT * FROM transfers WHERE id=?',(TASK,)).fetchone()
+        if row is None:
+            fail('The evidenced task is absent.')
+        row = dict(row)
+    if row['reply_mode']!='channel' or row['task_state']=='cancelled' or not row['source']:
+        fail('The original handoff is cancelled or unavailable.')
+    source,original = json.loads(row['source']),json.loads(row['original_source'])
+    member_state = json.loads((home/'slack_membership.json').read_text())
+    member = member_state.get('members',{}).get(row['owner'],{})
+    dm = member_state.get('conversations',{}).get(source.get('chat_id'),{})
+    shared = member_state.get('conversations',{}).get(original.get('chat_id'),{})
+    if (member_state.get('workspace_id')!=row['team'] or member.get('status')!='ready' or
+            source.get('platform')!='slack' or source.get('scope_id')!=row['team'] or
+            source.get('user_id')!=row['owner'] or source.get('chat_type')!='dm' or
+            source.get('chat_id')!=member.get('dm_id') or source.get('profile')!='task-'+TASK or
+            dm.get('kind')!='dm' or dm.get('enabled') is not True or row['owner'] not in dm.get('members',[]) or
+            shared.get('kind')!='shared' or shared.get('enabled') is not True or row['owner'] not in shared.get('members',[]) or
+            original.get('scope_id')!=row['team'] or original.get('user_id')!=row['owner']):
+        fail('Current member, owner or originating conversation authorization is unavailable.')
+    task_home = home/'profiles'/source['profile']
+    identity = json.loads((task_home/'slack_identity.json').read_text())
+    if identity!={'workspace_id':row['team'],'user_id':row['owner'],'kind':'isolated_task','task_id':TASK}:
+        fail('The task profile has unrelated identity metadata.')
+    key = digest(('v2:'+row['team']+':'+row['owner']+':'+str(task_home.resolve())).encode())
+    if key!=EXPECTED_CONTEXT:
+        fail('The evidenced owner/context hash changed.')
+    return row,source,original,key
+
+
+def get_json(http,url,key,params=None):
+    response = http.get(url,headers={'Authorization':'Bearer '+key},params=params,
+                        timeout=15,allow_redirects=False)
+    if response.status_code!=200:
+        fail('Authenticated read failed with HTTP '+str(response.status_code)+'.')
+    return response.json()
+
+
+def current_slack_authorization(http,key,row,source,original):
+    def slack(method,params=None):
+        result = get_json(http,'https://slack.com/api/'+method,key,params)
+        if not isinstance(result,dict) or result.get('ok') is not True:
+            fail('Current Slack authorization could not be verified.')
+        return result
+    auth = slack('auth.test')
+    user = slack('users.info',{'user':row['owner']}).get('user',{})
+    dm = slack('conversations.info',{'channel':source['chat_id']}).get('channel',{})
+    if (auth.get('team_id')!=row['team'] or user.get('id')!=row['owner'] or
+            user.get('team_id')!=row['team'] or user.get('deleted') or user.get('is_bot') or
+            dm.get('id')!=source['chat_id'] or dm.get('is_im') is not True or dm.get('user')!=row['owner']):
+        fail('Current Slack owner/workspace/private DM authorization changed.')
+    members,cursor,seen = set(),' ',set()
+    for _ in range(100):
+        params = {'channel':original['chat_id'],'limit':200}
+        if cursor.strip():
+            params['cursor'] = cursor
+        result = slack('conversations.members',params)
+        members.update(result.get('members',[]))
+        cursor = result.get('response_metadata',{}).get('next_cursor','')
+        if not cursor:
+            break
+        if cursor in seen:
+            fail('Slack membership pagination repeated a cursor.')
+        seen.add(cursor)
+    else:
+        fail('Slack membership pagination was incomplete.')
+    if row['owner'] not in members or auth.get('user_id') not in members:
+        fail('The requester or Clanker is no longer a member of the originating channel.')
+
+
+def no_remote_creation(http,key):
+    records = 0
+    for offset in range(0,10000,100):
+        rows = get_json(http,'https://api.onkernel.com/browsers',key,
+                        {'include_deleted':'true','limit':100,'offset':offset})
+        if not isinstance(rows,list):
+            fail('Kernel returned an unsupported historical browser list.')
+        if any(not isinstance(row,dict) or 'name' not in row for row in rows):
+            fail('Kernel historical records omitted browser names; absence cannot be verified.')
+        records += len(rows)
+        if any(isinstance(row,dict) and str(row.get('name','')).startswith(PREFIX) for row in rows):
+            fail('A matching Kernel browser exists or existed; do not clear this marker without separate reconciliation.')
+        if len(rows)<100:
+            return {'http_status':200,'historical_records':records,'pagination_complete':True,'name_prefix_matches':0}
+    fail('Kernel historical pagination was incomplete.')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--home',type=Path,default=ROOT/'.local/hermes-lab/home',help='Protected owning gateway home.')
+    parser.add_argument('--apply',action='store_true',help='Clear this one verified unacknowledged entry only while the gateway is stopped.')
+    parser.add_argument('--restore-backup',type=Path,help='Preview/restore this command\'s exact private backup; --apply performs restoration.')
+    args = parser.parse_args()
+    home = args.home.expanduser().resolve(strict=True)
+    status = quiescence(home,args.apply)
+    row,source,original,key = authenticated_state(home)
+    path = home/'.clanker-cloud/kernel/contexts'/(key+'.json')
+    safe_path(home,path)
+    if path.stat().st_mode & 0o077:
+        fail('The protected context file permissions are exposed.')
+    with path.open('rb') as locked:
+        fcntl.flock(locked.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        before = locked.read()
+        state = json.loads(before)
+        if state.get('owner')!={'team':row['team'],'requester':row['owner']}:
+            fail('The protected Kernel state belongs to another owner.')
+        receipt = {'mode':'apply' if args.apply else 'preview','task_id':TASK,'context':key,**status,
+                   'remote_create_delete':False,'slack_messages_sent':False}
+        if args.restore_backup:
+            backup = args.restore_backup.expanduser().resolve(strict=True)
+            safe_path(home,backup)
+            manifest = json.loads((backup/'receipt.json').read_text())
+            restored = (backup/'before.json').read_bytes()
+            if (manifest.get('task_id')!=TASK or manifest.get('context')!=key or
+                    digest(restored)!=manifest.get('before_sha256') or digest(before)!=manifest.get('after_sha256')):
+                fail('The backup is unrelated or the context changed after reconciliation.')
+            after = restored
+            receipt.update(mode='restore_apply' if args.apply else 'restore_preview',backup=str(backup))
+        else:
+            entry = state.get('sessions',{}).get(ENTRY)
+            thread = source['chat_id']+':'+str(source.get('thread_id') or '')
+            if (not isinstance(entry,dict) or entry.get('dispatch_unknown') is not True or entry.get('session_id') or
+                    entry.get('home')!=str(home/'profiles'/source['profile']) or state.get('threads',{}).get(thread)!=ENTRY):
+                fail('The exact unacknowledged owner/thread marker changed.')
+            if any(value==ENTRY and name!=thread for name,value in state['threads'].items()):
+                fail('The unacknowledged entry is referenced by another thread.')
+            values = dotenv_values(home/'.env',interpolate=False)
+            if not values.get('KERNEL_API_KEY') or not values.get('SLACK_BOT_TOKEN'):
+                fail('Private Kernel/Slack service credentials are missing.')
+            http = requests.Session()
+            http.trust_env = False
+            current_slack_authorization(http,values['SLACK_BOT_TOKEN'],row,source,original)
+            receipt['kernel_history'] = no_remote_creation(http,values['KERNEL_API_KEY'])
+            state['sessions'].pop(ENTRY)
+            state['threads'].pop(thread)
+            after = (json.dumps(state,indent=2)+'\n').encode()
+        receipt.update(before_sha256=digest(before),after_sha256=digest(after),local_context_change_only=True)
+        if args.apply:
+            quiescence(home,True)
+            authenticated_state(home)
+            if path.read_bytes()!=before:
+                fail('The context changed after verification; nothing was applied.')
+            if not args.restore_backup:
+                backup = home/'.clanker-cloud/reconciliations'/('offsite-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8])
+                safe_path(home,backup)
+                private_write(backup/'before.json',before)
+                receipt['backup'] = str(backup)
+                private_write(backup/'receipt.json',(json.dumps(receipt,indent=2)+'\n').encode())
+            private_write(path,after)
+        print(json.dumps(receipt,indent=2))
+
+
+if __name__=='__main__':
+    try:
+        main()
+    except ReconciliationError as error:
+        print(json.dumps({'success':False,'error':str(error)}),file=sys.stderr)
+        raise SystemExit(1)
+    except (ValueError,OSError,sqlite3.Error,requests.RequestException):
+        # External error bodies, URLs and credentials never enter output.
+        print(json.dumps({'success':False,'error':'Scoped reconciliation validation failed; no provider creation/deletion or Slack message was attempted.'}),file=sys.stderr)
+        raise SystemExit(1)

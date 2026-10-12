@@ -1,0 +1,236 @@
+diff --git a/hermes/agent/vault_store.py b/hermes/agent/vault_store.py
+--- a/hermes/agent/vault_store.py
++++ b/hermes/agent/vault_store.py
+@@ -307,6 +307,8 @@
+         label: str,
+         secret: Dict[str, Any],
+         origin: Optional[str] = None,
++        *,
++        idempotency_key: Optional[str] = None,
+     ) -> VaultItemMeta:
+         """Add an item. ``secret`` is the sensitive payload (encrypted at rest).
+ 
+@@ -352,7 +354,7 @@
+             if origin:
+                 norm_origin = normalize_origin(origin)
+ 
+-        item_id = f"vault_{uuid.uuid4().hex[:12]}"
++        item_id = self.id_for_key(idempotency_key) if idempotency_key else f"vault_{uuid.uuid4().hex[:12]}"
+         record = {
+             "id": item_id,
+             "kind": kind,
+@@ -365,9 +367,23 @@
+         }
+         with self._locked():
+             items = self._read_all()
++            if idempotency_key:
++                for existing in items:
++                    if existing.get('id') == item_id:
++                        if any(existing.get(field) != record[field] for field in
++                               ('kind', 'label', 'origin', 'identifier_type', 'identifier')):
++                            raise VaultError('idempotency key belongs to a different item')
++                        return self._meta(existing)
+             items.append(record)
+             self._write_all(items)
+         return self._meta(record)
++
++    @staticmethod
++    def id_for_key(key: str) -> str:
++        """Stable, opaque handle for retrying a trusted save after a crash."""
++        if not isinstance(key, str) or not key or len(key) > 256:
++            raise VaultError('invalid idempotency key')
++        return 'vault_' + uuid.uuid5(uuid.NAMESPACE_URL, 'hermes-vault:' + key).hex
+ 
+     def list_items(self) -> List[VaultItemMeta]:
+         """Metadata-only listing. Secret payloads are never included."""
+diff --git a/hermes/agent/gateway_context.py b/hermes/agent/gateway_context.py
+new file mode 100644
+--- /dev/null
++++ b/hermes/agent/gateway_context.py
+@@ -0,0 +1,35 @@
++"""Trusted gateway turn context for native plugins, never selected by tool arguments.
++
++The runner binds this after routing/authorization, inside the owning profile.
++Context-local storage prevents a concurrent profile's tools borrowing the source.
++Outside a gateway turn (CLI, cron, subprocess), the context is absent.
++"""
++from contextlib import contextmanager
++from contextvars import ContextVar
++from dataclasses import dataclass
++
++
++@dataclass(frozen=True)
++class GatewayTurn:
++    runner: object
++    source: object
++    task_id: str
++    message: str
++    home: str
++
++
++_turn = ContextVar('hermes_gateway_turn', default=None)
++
++
++def current_gateway_turn():
++    return _turn.get()
++
++
++@contextmanager
++def gateway_turn_scope(runner, source, task_id, message):
++    from hermes_constants import get_hermes_home
++    token = _turn.set(GatewayTurn(runner, source, str(task_id), str(message), str(get_hermes_home())))
++    try:
++        yield
++    finally:
++        _turn.reset(token)
+diff --git a/hermes/hermes_cli/plugins.py b/hermes/hermes_cli/plugins.py
+--- a/hermes/hermes_cli/plugins.py
++++ b/hermes/hermes_cli/plugins.py
+@@ -106,6 +106,10 @@
+ _install_plugin_debug_handler()
+ 
+ VALID_HOOKS: Set[str] = {
++    # Async control observer, under the authenticated source's routed profile.
++    # Concrete consumer: cancelling pending private-access outboxes on /stop.
++    # Payload: command, source, runner. Responses never replace command dispatch.
++    "on_gateway_control",
+     "pre_tool_call", "post_tool_call", "transform_terminal_output", "transform_tool_result",
+     # transform_llm_output: return a replacement string (first non-None wins) or None.
+     "transform_llm_output", "pre_llm_call", "post_llm_call",
+diff --git a/hermes/gateway/run_turn_runner.py b/hermes/gateway/run_turn_runner.py
+--- a/hermes/gateway/run_turn_runner.py
++++ b/hermes/gateway/run_turn_runner.py
+@@ -1722,7 +1722,8 @@
+             if ctx.inbound_message_id is not None:
+                 kwargs["persist_user_platform_id"] = str(ctx.inbound_message_id)
+             from agent.notification_presentation import notification_turn
+-            with notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
++            from agent.gateway_context import gateway_turn_scope
++            with gateway_turn_scope(self._runner, ctx.source, ctx.session_id, ctx.message), notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
+                 return agent.run_conversation(api_message, **kwargs)
+         finally:
+             unregister_gateway_notify(session_key)
+diff --git a/hermes/gateway/run_busy.py b/hermes/gateway/run_busy.py
+--- a/hermes/gateway/run_busy.py
++++ b/hermes/gateway/run_busy.py
+@@ -984,6 +984,8 @@
+     async def _busy_stop_command(self, event: MessageEvent, quick_key: str, source):
+         # Hard-kill: a soft interrupt can't reach a truly hung executor thread.
+         from gateway.run import _INTERRUPT_REASON_STOP
++        from gateway.plugin_control import notify_gateway_control
++        await notify_gateway_control(self, source, 'stop')
+         await self._interrupt_and_clear_session(
+             quick_key, source, interrupt_reason=_INTERRUPT_REASON_STOP, invalidation_reason="stop_command",
+         )
+diff --git a/hermes/gateway/slash_commands.py b/hermes/gateway/slash_commands.py
+--- a/hermes/gateway/slash_commands.py
++++ b/hermes/gateway/slash_commands.py
+@@ -436,6 +436,9 @@
+             await self._interrupt_and_clear_session(
+                 key, source, interrupt_reason=_INTERRUPT_REASON_STOP,
+                 invalidation_reason=invalidation_reason)
++        from gateway.plugin_control import notify_gateway_control
++        control_results = await notify_gateway_control(self, source, 'stop')
++        cancelled_access = any(isinstance(result, dict) and result.get('cancelled_pending') for result in control_results)
+         agent = self._running_agents.get(session_key)
+         if agent is _AGENT_PENDING_SENTINEL:  # force-clean the sentinel so the session is unlocked
+             await _stop(session_key, "stop_command_pending")
+@@ -470,6 +473,8 @@
+ 
+         # No running agent anywhere for this scope. Background delegations the session dispatched in an
+         # earlier turn still count as "active": stop them; each returns as an interrupted completion.
++        if cancelled_access:
++            return EphemeralReply(t("gateway.stop.stopped_pending"))
+         from tools.async_delegation import interrupt_for_session
+         if interrupt_for_session(session_key=session_key, reason="stop_command",
+                                  parent_session_id=str(getattr(session_entry, "session_id", "") or "")):
+diff --git a/hermes/gateway/slash_commands_session.py b/hermes/gateway/slash_commands_session.py
+--- a/hermes/gateway/slash_commands_session.py
++++ b/hermes/gateway/slash_commands_session.py
+@@ -155,6 +155,8 @@
+     async def _handle_reset_command(self, event: MessageEvent) -> Union[str, EphemeralReply]:
+         """Handle /new or /reset command."""
+         source = event.source
++        from gateway.plugin_control import notify_gateway_control
++        await notify_gateway_control(self, source, 'reset')
+         session_key = self._session_key_for_source(source)
+         self._invalidate_session_run_generation(session_key, reason="session_reset")
+         # Evict the running-agent slot now that the generation is bumped: the in-flight run's own
+diff --git a/hermes/gateway/plugin_control.py b/hermes/gateway/plugin_control.py
+new file mode 100644
+--- /dev/null
++++ b/hermes/gateway/plugin_control.py
+@@ -0,0 +1,7 @@
++"""Profile-scoped native plugin notification for authenticated control commands."""
++async def notify_gateway_control(runner, source, command):
++    from hermes_cli.plugins import has_hook, ainvoke_hook
++    from gateway.run import _profile_runtime_scope
++    with _profile_runtime_scope(runner._resolve_profile_home_for_source(source)):
++        if not has_hook('on_gateway_control'):return []
++        return await ainvoke_hook('on_gateway_control', command=command, source=source, runner=runner)
+diff --git a/hermes/tools/browser_vault_tool.py b/hermes/tools/browser_vault_tool.py
+--- a/hermes/tools/browser_vault_tool.py
++++ b/hermes/tools/browser_vault_tool.py
+@@ -194,6 +194,7 @@
+ # Per kind: a JS probe that is truthy on a tab holding the form this kind fills.
+ _TAB_PROBES = {
+     "login": "!!document.querySelector('input[type=password]')",
++    "otp": "!!document.querySelector('input[autocomplete=one-time-code], input[name*=otp i], input[name*=code i], input[id*=otp i], input[id*=code i], input[name*=totp i], input[aria-label*=code i]')",
+     "payment": "!!document.querySelector('input[autocomplete^=cc-], [name*=card i], [placeholder*=card i], [name*=cvc i], [name*=cvv i]')",
+     "address": "!!document.querySelector('input[autocomplete^=address-], [autocomplete=postal-code], [name*=address i], [name*=zip i], [name*=postal i]')",
+ }
+@@ -332,7 +333,8 @@
+                       "input[id*=otp i], input[id*=code i], input[name*=totp i], input[aria-label*=code i]')")
+ 
+ 
+-def browser_vault_enter_code(handle: str = "", task_id: Optional[str] = None) -> str:
++def browser_vault_enter_code(handle: str = "", task_id: Optional[str] = None, *,
++                             expected_origin: Optional[str] = None, provided_code: Optional[str] = None) -> str:
+     """Second factor: fill the one-time code the CURRENT page asks for. If the saved login (``handle``) has an
+     authenticator seed, the code is minted server-side and nobody is asked; otherwise the user is prompted on
+     their surface for the code their phone/email/app shows. The code goes into the page over the supervisor
+@@ -343,8 +345,11 @@
+     from agent.vault_login_classifier import LoginControl, build_fill_js, build_inspection_js, build_otp_fills, classify_otp_controls
+ 
+     effective_task_id = task_id or "default"
+-    _focus_bound_origin(effective_task_id, "", "otp")
++    _focus_bound_origin(effective_task_id, expected_origin or "", "otp")
+     origin = _current_page_origin(effective_task_id)
++    if expected_origin and origin != expected_origin:
++        return json.dumps({'success': False, 'error_type': 'origin_mismatch',
++                           'error': 'The code page does not match this saved account.'})
+     if not origin:
+         return json.dumps({"success": False, "error": "No page with a code field is open."})
+     site = origin.split("://", 1)[-1]
+@@ -360,10 +365,10 @@
+                            "error": ("No one-time-code field on the current page. If the site wants a passkey, hardware key or "
+                                      "an approval tap in an app, tell the user to complete it on their device and wait for the page to move on.")})
+ 
+-    code: Optional[str] = None
++    code: Optional[str] = provided_code
+     source = "user"
+     backend = backend_for_handle(handle) if handle else None
+-    if backend is not None:
++    if backend is not None and not code:
+         try:
+             code = backend.resolve_otp(handle)
+         except Exception:
+diff --git a/hermes/tools/browser_tool_session.py b/hermes/tools/browser_tool_session.py
+--- a/hermes/tools/browser_tool_session.py
++++ b/hermes/tools/browser_tool_session.py
+@@ -268,6 +268,15 @@
+         return _create_lightpanda_session(task_id)
+ 
+     info = _session_record("h", None, {"local": True})
++    # Opt-in managed local profiles may reuse an explicitly named session after
++    # its daemon/Chromium restarts. Scope the stable name to the current home;
++    # private-network sidecars and real-profile/cloud modes stay unchanged.
++    if allow_real_profile:
++        from hermes_cli.config import read_raw_config
++        if (read_raw_config().get('browser') or {}).get('persistent_local_sessions') is True:
++            import hashlib
++            from hermes_constants import get_hermes_home
++            info['session_name']='h_'+hashlib.sha256((str(get_hermes_home())+'\0'+task_id).encode()).hexdigest()[:20]
+     _bt.logger.info("Created local browser session %s for task %s", info["session_name"], task_id)
+     return info
+ 

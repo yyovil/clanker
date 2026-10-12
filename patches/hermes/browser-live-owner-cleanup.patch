@@ -1,0 +1,23 @@
+diff --git a/hermes/tools/browser_tool_lifecycle.py b/hermes/tools/browser_tool_lifecycle.py
+--- a/hermes/tools/browser_tool_lifecycle.py
++++ b/hermes/tools/browser_tool_lifecycle.py
+@@ -322,14 +322,16 @@
+ def _reap_socket_dir(socket_dir: str, session_name: str, tracked_names: set) -> bool:
+     """Reap one ``agent-browser-<session>`` dir if orphaned; True when a daemon was killed.
+ 
+-    A live ``owner_pid`` means another hermes process owns it — leave it UNLESS untracked
+-    here and idle past ``BROWSER_ORPHAN_GRACE_SECONDS`` (owner-alive alone made leaked
+-    daemons immortal); no owner_pid (legacy) falls back to this process's tracking. A
++    A live foreign ``owner_pid`` is authoritative; this process cannot know that
++    owner's active sessions. Only our own live, untracked sessions may be reaped
++    after ``BROWSER_ORPHAN_GRACE_SECONDS``. No owner_pid (legacy) falls back to this process's tracking. A
+     pidless dir is only stale after the grace period (deleting it immediately races the
+     creator's first stdout open). The PID is identity-verified before any tree-kill.
+     """
+     owner_pid, owner_alive = _owner_pid_alive(socket_dir, session_name)
+     if owner_alive is True:
++        if owner_pid != os.getpid():
++            return False
+         if session_name in tracked_names:
+             return False
+         idle_s = _socket_dir_idle_seconds(socket_dir)

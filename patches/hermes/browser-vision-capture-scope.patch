@@ -1,0 +1,91 @@
+diff --git a/hermes/tools/browser_tool.py b/hermes/tools/browser_tool.py
+--- a/hermes/tools/browser_tool.py
++++ b/hermes/tools/browser_tool.py
+@@ -584,6 +584,11 @@
+                     "type": "boolean",
+                     "default": False,
+                     "description": "If true, overlay numbered [N] labels on interactive elements. Each [N] maps to ref @eN for subsequent browser commands. Useful for QA and spatial reasoning about page layout."
++                },
++                "full_page": {
++                    "type": "boolean",
++                    "default": True,
++                    "description": "Capture the full scrollable page (default). Set false to capture only the current viewport when comparing visible rendering. Viewport selection is unsupported by Camofox."
+                 }
+             },
+             "required": ["question"]
+@@ -1206,13 +1211,13 @@
+ from tools import browser_tool_vision as _vision
+ 
+ 
+-def _capture_vision_screenshot(effective_task_id: str, annotate: bool, screenshot_path: Path, lp_prerouted: bool):
++def _capture_vision_screenshot(effective_task_id: str, annotate: bool, screenshot_path: Path, lp_prerouted: bool, full_page: bool = True):
+     """Take (or adopt the pre-routed) screenshot; returns ``(result, path, error_json_or_None)``."""
+     if lp_prerouted and screenshot_path.exists():
+         result = _lp._annotate_lightpanda_fallback(
+             {"success": True, "data": {"path": str(screenshot_path)}}, _LP_VISION_FALLBACK_REASON)
+     else:
+-        screenshot_args = (["--annotate"] if annotate else []) + ["--full", str(screenshot_path)]
++        screenshot_args = (["--annotate"] if annotate else []) + (["--full"] if full_page else []) + [str(screenshot_path)]
+         # A failed Lightpanda pre-route forces Chrome so _run_browser_command
+         # doesn't trigger a redundant LP fallback.
+         result = _session._run_browser_command(effective_task_id, "screenshot", screenshot_args,
+@@ -1233,11 +1238,13 @@
+     return result, screenshot_path, None
+ 
+ 
+-def browser_vision(question: str, annotate: bool = False, task_id: Optional[str] = None) -> Union[str, Dict[str, Any]]:
++def browser_vision(question: str, annotate: bool = False, task_id: Optional[str] = None, full_page: bool = True) -> Union[str, Dict[str, Any]]:
+     """Screenshot the current page for visual inspection. Native-vision models get the image
+     attached to the conversation; otherwise the auxiliary vision model returns a text
+     analysis. The file is kept and its path returned (MEDIA:<path>)."""
+     if _is_camofox_mode():
++        if not full_page:
++            return _dumps(_err("Camofox does not support selecting viewport-only screenshots."))
+         return _camofox("camofox_vision", question, annotate, task_id)
+ 
+     import uuid as uuid_mod
+@@ -1250,13 +1257,13 @@
+         return blocked
+ 
+     _lp_prerouted, _lp_fallback_warning, screenshot_path = _vision._lightpanda_vision_preroute(
+-        effective_task_id, annotate, screenshot_path)
++        effective_task_id, annotate, screenshot_path, full_page=full_page)
+     result: Dict[str, Any] = {}
+     try:
+         screenshots_dir.mkdir(parents=True, exist_ok=True)
+         _lifecycle._cleanup_old_screenshots(screenshots_dir, max_age_hours=24)
+         result, screenshot_path, error = _capture_vision_screenshot(
+-            effective_task_id, annotate, screenshot_path, _lp_prerouted)
++            effective_task_id, annotate, screenshot_path, _lp_prerouted, full_page=full_page)
+         if error is not None:
+             return error
+         # Native image routing: attach the screenshot directly instead of describing it
+@@ -1322,7 +1329,7 @@
+     ("browser_back", "◀️", None, {}),
+     ("browser_press", "⌨️", None, {"key": ""}),
+     ("browser_get_images", "🖼️", _install.check_browser_requirements, {}),
+-    ("browser_vision", "👁️", _install.check_browser_vision_requirements, {"question": "", "annotate": False}),
++    ("browser_vision", "👁️", _install.check_browser_vision_requirements, {"question": "", "annotate": False, "full_page": True}),
+     ("browser_console", "🖥️", _install.check_browser_requirements, {"clear": False, "expression": None}),
+ )
+ 
+diff --git a/hermes/tools/browser_tool_vision.py b/hermes/tools/browser_tool_vision.py
+--- a/hermes/tools/browser_tool_vision.py
++++ b/hermes/tools/browser_tool_vision.py
+@@ -21,6 +21,7 @@
+ 
+ def _lightpanda_vision_preroute(
+     effective_task_id: str, annotate: bool, screenshot_path: Path,
++    *, full_page: bool = True,
+ ) -> Tuple[bool, Optional[str], Path]:
+     """Capture the vision screenshot via the Chrome fallback when Lightpanda is the engine
+     (it has no graphical renderer). Returns ``(prerouted, fallback_warning, path)``;
+@@ -30,7 +31,7 @@
+     if engine != "lightpanda" or not _cloud._should_inject_engine(engine):
+         return False, None, screenshot_path
+     _bt.logger.debug("browser_vision: pre-routing screenshot to Chrome (engine=lightpanda)")
+-    screenshot_args = ["--annotate"] if annotate else []
++    screenshot_args = (["--annotate"] if annotate else []) + (["--full"] if full_page else [])
+     fb_result = _lp._chrome_fallback_screenshot(effective_task_id, screenshot_args, _bt._get_command_timeout())
+     fb_result = _lp._annotate_lightpanda_fallback(fb_result, _bt._LP_VISION_FALLBACK_REASON)
+     if not fb_result.get("success"):

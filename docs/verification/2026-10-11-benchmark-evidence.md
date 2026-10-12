@@ -1,0 +1,20 @@
+# Separate benchmark evidence campaign — pending
+
+This is a scaffold, not a completed rerun. Start only after an honest full-suite 12/12 repair result. Campaign ID: pending. Acceptance run IDs: pending. Every row includes its unchanged initial prompt; execute all associated followups from [the original benchmark](../CLANKER_BENCHMARK.md).
+
+Screenshots must come from the actual exact Slack threads through Aside, after confirming thread identity. Do not capture authentication cards, access links, passwords, codes or account secrets. Browser recording is off: current runtime capture is blocked because pre-capture authentication exclusion is not proven. No auth or private intervals have been captured. Do not replace missing video with fabricated replay or silently call a partial recording complete.
+
+| Task | Result and acceptance evidence | Slack thread screenshots | Browser replay |
+| --- | --- | --- | --- |
+| Can you sign me into Instamart using my saved number? | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Open my Instamart cart from earlier. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Take the noodles in my Instamart cart to checkout using my saved home address and contact details. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Add one pair of all-white Nike Air Force 1 ’07, UK 7, to my bag. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Add a 13-inch MacBook Air in Midnight, with 16 GB memory and 512 GB storage, to my Apple India bag. No paid extras. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Sign me into GitHub using my saved login and authenticator. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Add an issue called “Choose the offsite dates” to my clanker-offsite-test repository on GitHub. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Help us plan a 12-person company offsite in Goa for 10–13 December 2026, leaving from Mumbai, with ₹25,000 per person for travel and stays. I’m vegetarian and want a quiet room. Create the itinerary in Google Docs and post the link here. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Can we sort out my travel details for the Goa offsite privately? Send me a DM. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| We were planning the company offsite in #clanker-test. What dates did we settle on, and what’s still pending for me? | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Move the company offsite to 17–20 December 2026. Keep Goa, the group size, everyone’s preferences and the same budget. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |
+| Open Instamart and start getting my noodles cart ready for checkout. | Pending; run ID pending; all followups unverified. | Pending actual exact-thread capture; auth cards excluded. | Not captured; authentication exclusion unavailable. |

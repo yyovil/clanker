@@ -1,0 +1,132 @@
+--- a/hermes/agent/vault_store.py
++++ b/hermes/agent/vault_store.py
+@@ -154,9 +154,9 @@
+ class VaultItemMeta:
+     """Metadata-only view of a vault item. Never contains secret values.
+ 
+-    For ``kind='login'`` the identifier (email/username/phone) is metadata,
++    For password logins the identifier (email/username/phone) is metadata,
+     not a secret: the agent may see it and type it itself. Only the password
+-    is vault-secret.
++    is vault-secret. SMS logins expose only a masked identifier; the number stays encrypted.
+     """
+ 
+     id: str
+@@ -171,6 +171,7 @@
+     # ``origin`` is the first/primary one). Fill matching stays exact-origin against
+     # this list — no wildcard or subdomain inference is ever derived from it.
+     allowed_origins: tuple = ()
++    login_method: str = "password"
+ 
+     def to_dict(self) -> Dict[str, Any]:
+         out = {
+@@ -185,6 +186,8 @@
+             out["identifier_type"] = self.identifier_type
+         if self.has_otp:
+             out["has_otp"] = True
++        if self.kind == "login" and self.login_method == "sms":
++            out["login_method"] = "sms"
+         if len(self.allowed_origins) > 1:
+             out["allowed_origins"] = list(self.allowed_origins)
+         return out
+@@ -313,10 +316,12 @@
+         """Add an item. ``secret`` is the sensitive payload (encrypted at rest).
+ 
+         For ``kind='login'``, ``origin`` is required and the payload must
+-        contain ``identifier_type``, ``identifier`` and ``password``. The
++        contain ``identifier_type``, ``identifier`` and ``password`` for password logins. The
+         identifier fields are NOT secret — they are moved into item metadata
+         (the agent may see and type the identifier itself); only
+-        ``password`` stays in the encrypted secret payload. ``payment`` and
++        ``password`` stays in the encrypted secret payload. Passwordless SMS logins
++        instead accept ``login_method=sms`` and ``phone_number``, keep the number
++        secret, and expose a masked identifier. ``payment`` and
+         ``address`` payloads remain fully secret. ``api_key`` requires an HTTPS
+         origin and keeps the key entirely in the encrypted payload.
+         """
+@@ -329,23 +334,22 @@
+         identifier: Optional[str] = None
+         identifier_type: Optional[str] = None
+         secret = dict(secret)
++        login_method = secret.pop("login_method", "password") if kind == "login" else "password"
+         if kind == "login":
+             if not origin:
+                 raise VaultError("origin is required for login items")
+             norm_origin = normalize_origin(origin)
+-            id_type = secret.pop("identifier_type", None)
+-            if id_type not in LOGIN_IDENTIFIER_TYPES:
+-                raise VaultError(
+-                    f"identifier_type must be one of {LOGIN_IDENTIFIER_TYPES}"
+-                )
+-            identifier = str(secret.pop("identifier", "") or "").strip()
+-            if not identifier or not secret.get("password"):
+-                raise VaultError("login items require identifier and password")
+-            identifier_type = str(id_type)
+-            # Login secret payload is password (+ optional TOTP seed); identifier lives in
+-            # metadata and any stray origin echo is dropped.
+-            otp_secret = normalize_otp_secret(str(secret.get("otp_secret") or ""))
+-            secret = {"password": secret["password"], **({"otp_secret": otp_secret} if otp_secret else {})}
++            if login_method == "sms":
++                phone = secret.get("phone_number")
++                if (set(secret) != {"phone_number"} or not isinstance(phone, str) or
++                        not re.fullmatch(r"\+?[0-9]{7,15}", phone) or urlsplit(norm_origin).scheme != "https"):
++                    raise VaultError("SMS logins require only a phone number and an HTTPS origin")
++                identifier_type, identifier = "phone", "••••" + phone[-4:]
++                secret = {"phone_number": phone}
++            elif login_method != "password":
++                raise VaultError("unsupported login method")
++            else:
++                secret, identifier_type, identifier = self._password_login(secret)
+         elif kind == "api_key":
+             if not origin:
+                 raise VaultError("origin is required for API key items")
+@@ -376,18 +380,39 @@
+             "identifier": identifier,
+             "secret": dict(secret),
+         }
++        if login_method == "sms":
++            record["login_method"] = "sms"
+         with self._locked():
+             items = self._read_all()
+             if idempotency_key:
+                 for existing in items:
+                     if existing.get('id') == item_id:
+-                        if any(existing.get(field) != record[field] for field in
+-                               ('kind', 'label', 'origin', 'identifier_type', 'identifier')):
++                        if (existing.get('login_method', 'password') != login_method or
++                                any(existing.get(field) != record[field] for field in
++                                    ('kind', 'label', 'origin', 'identifier_type', 'identifier')) or
++                                (login_method == 'sms' and existing.get('secret') != secret)):
+                             raise VaultError('idempotency key belongs to a different item')
+                         return self._meta(existing)
+             items.append(record)
+             self._write_all(items)
+         return self._meta(record)
++
++    @staticmethod
++    def _password_login(secret):
++        id_type = secret.pop("identifier_type", None)
++        if id_type not in LOGIN_IDENTIFIER_TYPES:
++            raise VaultError(
++                f"identifier_type must be one of {LOGIN_IDENTIFIER_TYPES}"
++            )
++        identifier = str(secret.pop("identifier", "") or "").strip()
++        if not identifier or not secret.get("password"):
++            raise VaultError("login items require identifier and password")
++        identifier_type = str(id_type)
++        # Login secret payload is password (+ optional TOTP seed); identifier lives in
++        # metadata and any stray origin echo is dropped.
++        otp_secret = normalize_otp_secret(str(secret.get("otp_secret") or ""))
++        secret = {"password": secret["password"], **({"otp_secret": otp_secret} if otp_secret else {})}
++        return secret, identifier_type, identifier
+ 
+     @staticmethod
+     def id_for_key(key: str) -> str:
+@@ -448,6 +473,7 @@
+             identifier_type=rec.get("identifier_type") if identifier else None,
+             identifier=identifier or None,
+             has_otp=bool((rec.get("secret") or {}).get("otp_secret")),
++            login_method=rec.get("login_method", "password"),
+         )
+ 
+ 

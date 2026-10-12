@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Invoke the project-versioned Hermes source with dedicated local state.
+# The gateway is trusted; enabled generated-code tools use the Seatbelt provider.
+set -euo pipefail
+umask 077
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+lab_dir="$project_dir/.local/hermes-lab"
+source_dir="$project_dir/hermes"
+
+if [[ ! -x "$lab_dir/venv/bin/hermes" ]]; then
+  echo "Install the pinned baseline first; see docs/INSTALL.md." >&2
+  exit 1
+fi
+if [[ ! -f "$source_dir/pyproject.toml" ]]; then
+  echo "Hermes source is missing; expected hermes/ at the project root." >&2
+  exit 1
+fi
+if [[ -e "$source_dir/.env" ]]; then
+  echo "The Hermes source has a fallback .env; keep credentials only in the lab home." >&2
+  exit 1
+fi
+
+mkdir -p "$lab_dir/home" "$lab_dir/workspace" "$lab_dir/gateway-locks" "$lab_dir/managed"
+if [[ ! -f "$lab_dir/home/config.yaml" ]]; then
+  cp "$project_dir/config/hermes-defaults.yaml" "$lab_dir/home/config.yaml"
+fi
+if [[ ! -f "$lab_dir/home/.env" ]]; then
+  touch "$lab_dir/home/.env"
+fi
+chmod 600 "$lab_dir/home/.env"
+if [[ -f "$lab_dir/home/.clanker-execution/fleet.json" ]]; then
+  if ! env -i HOME="$HOME" PATH="/usr/bin:/bin" \
+      "$lab_dir/venv/bin/python" "$project_dir/runtime/seatbelt/recover.py" "$lab_dir/home"; then
+    echo "Browser execution is unavailable; continuing with Slack chat." >&2
+  fi
+fi
+
+cd "$lab_dir/workspace"
+# Credentials must be deliberately configured in the lab home. Keep HOME
+# unchanged for platform compatibility; do not inherit provider/session vars.
+# Command smoke: skip startup model/tool warmup until inference is configured.
+exec env -i \
+  HOME="$HOME" \
+  PATH="$lab_dir/venv/bin:$lab_dir/home/node/bin:$lab_dir/home/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  TERM="${TERM:-xterm-256color}" \
+  LANG="${LANG:-en_US.UTF-8}" \
+  HERMES_HOME="$lab_dir/home" \
+  PYTHONPATH="$project_dir/runtime" \
+  HERMES_MANAGED_DIR="$lab_dir/managed" \
+  HERMES_GATEWAY_LOCK_DIR="$lab_dir/gateway-locks" \
+  HERMES_DISABLE_LAZY_INSTALLS=1 \
+  HERMES_STARTUP_WARMUP_TIMEOUT=0 \
+  "$lab_dir/venv/bin/hermes" "$@"

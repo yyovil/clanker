@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Read-only plan/check/status; stage exact approval for QA-managed startup only."""
+import argparse
+import json
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+ROOT=Path(__file__).resolve().parents[1]
+sys.path[:0]=[str(ROOT/'runtime'),str(ROOT/'hermes')]
+from cloud_browser.profile_cleanup import (Executor,REVIEWED_SCOPE,digest,fields,make_executor,
+    read_protected,require,stage,verify_acceptance)
+from cloud_browser.profile_cleanup_local import write_private
+
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('operation',choices=['plan','check','stage','status'])
+    p.add_argument('--home',type=Path,required=True)
+    p.add_argument('--source-plan',type=Path)
+    p.add_argument('--acceptance',type=Path)
+    p.add_argument('--review',type=Path)
+    p.add_argument('--output',type=Path)
+    p.add_argument('--approved-sha256')
+    args=p.parse_args();ex=None
+    try:
+        home=args.home.resolve(strict=True)
+        if args.operation=='status':
+            out=read_protected(home/'.clanker-cloud/profile-cleanup-outcome.json')
+        elif args.operation=='stage':
+            require(args.review is not None and args.approved_sha256 is not None)
+            out=stage(home,read_protected(args.review),args.approved_sha256)
+        else:
+            from dotenv import dotenv_values
+            settings=dotenv_values(home/'.env',interpolate=False)
+            key=lambda:settings['KERNEL_API_KEY']
+            if args.operation=='plan':
+                require(args.source_plan is not None and args.acceptance is not None and args.output is not None)
+                source=read_protected(args.source_plan);scope=source['prospective_manifest']
+                require(digest(scope)==REVIEWED_SCOPE,'scope_changed')
+                acceptance=read_protected(args.acceptance)
+                ex=make_executor(home,scope,read_only=True,maintenance=SimpleNamespace(check=lambda:'read-only-review'),key=key)
+                with ex.local.connect() as db:canonical=ex.local.snapshot(db,scope)['canonical']
+                proof=verify_acceptance(acceptance,canonical)
+                review=dict(manifest=ex.prepare(scope,acceptance_sha256=proof),acceptance=acceptance)
+                require(not args.output.exists(),'review_exists')
+                write_private(args.output,(json.dumps(review,sort_keys=True)+'\n').encode())
+                out=dict(status='prepared_for_destructive_review',approved_sha256=digest(review),targets=32,provider_mutations=0,review_path=str(args.output.resolve()))
+            else:
+                require(args.review is not None)
+                review=read_protected(args.review);fields(review,'manifest acceptance');m=review['manifest']
+                require(verify_acceptance(review['acceptance'],m['local']['canonical'])==m['acceptance_sha256'])
+                ex=make_executor(home,m['scope'],read_only=True,maintenance=SimpleNamespace(check=lambda:'read-only-review'),key=key)
+                ex._validate(m,digest(m));ex._current(m,{})
+                ex._inventory(m,set())
+                out=dict(status='metadata_ready_for_review',approved_sha256=digest(review),targets=32,provider_mutations=0)
+        print(json.dumps(out,sort_keys=True));return 0
+    except Exception:
+        print(json.dumps(dict(status='refused',provider_mutations=0,reason='cleanup_metadata_unconfirmed')));return 1
+    finally:
+        if ex:ex.provider.close()
+
+if __name__=='__main__':raise SystemExit(main())

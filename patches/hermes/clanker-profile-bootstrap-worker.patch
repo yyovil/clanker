@@ -1,0 +1,35 @@
+diff --git a/hermes/gateway/slack_workspace.py b/hermes/gateway/slack_workspace.py
+--- a/hermes/gateway/slack_workspace.py
++++ b/hermes/gateway/slack_workspace.py
+@@ -280,7 +280,30 @@
+         from vault.service import configured_service
+         self.vault_service = None
+         try:
+-            service = configured_service(self)
++            # Slack connects before the gateway publishes its served profiles.
++            # Preserve the normal private-route checks during Vault bootstrap.
++            for profile in sorted({member['profile'] for member in self.state['members'].values()
++                                   if member.get('status') == 'ready'}):
++                await self.serve_profile(profile)
++            # Bootstrap can validate retained provider profiles with bounded
++            # HTTP reads. Keep Slack's loop responsive and preserve its context.
++            construction = asyncio.create_task(asyncio.to_thread(configured_service, self))
++            try:
++                service = await asyncio.shield(construction)
++            except asyncio.CancelledError:
++                # A cancelled await cannot stop a synchronous migration. Drain
++                # its worker before releasing this gateway's lifetime/lock;
++                # never publish a service from the cancelled startup.
++                while not construction.done():
++                    try:
++                        await asyncio.shield(construction)
++                    except asyncio.CancelledError:
++                        continue
++                    except Exception:
++                        break
++                if not construction.cancelled():
++                    construction.exception()
++                raise
+             if service:
+                 await service.start()
+                 self.vault_service = service

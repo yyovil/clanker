@@ -1,0 +1,114 @@
+--- a/hermes/gateway/run_turn.py
++++ b/hermes/gateway/run_turn.py
+@@ -27,6 +27,7 @@
+ from gateway.platforms.event import MessageEvent
+ from gateway.response_filters import display_kind_for_event, is_machinery_display_kind
+ from gateway.warning_notifications import diagnostic_metadata, diagnostic_turn_muted, diagnostic_wake_muted
++from gateway.message_author import message_author_metadata
+ from gateway.session import (
+     SessionSource, _session_key_namespace, build_channel_continuity_note,
+     build_session_context,
+@@ -1828,6 +1829,9 @@
+             _user_entry["display_kind"] = prepared.persist_user_display_kind
+         if prepared.persistence_owner:
+             _user_entry["display_metadata"] = {"gateway_input_owner": prepared.persistence_owner}
++        author = message_author_metadata(event, getattr(event, 'source', None))
++        if author:
++            _user_entry.setdefault("display_metadata", {}).update(author)
+         if getattr(event, "message_id", None):
+             _user_entry["message_id"] = str(event.message_id)
+         return _user_entry
+@@ -2220,7 +2224,8 @@
+                 persist_user_timestamp=prepared.persist_user_timestamp,
+                 persist_user_display_kind=prepared.persist_user_display_kind,
+                 persist_user_display_metadata={
+-                    "gateway_input_owner": prepared.persistence_owner, **diagnostic_metadata(event)},
++                    "gateway_input_owner": prepared.persistence_owner, **diagnostic_metadata(event),
++                    **message_author_metadata(event, source)},
+                 message_type=event.message_type,
+                 scheduled_heartbeat=bool(getattr(event, "_heartbeat_session_id", None)),
+             )
+@@ -3940,7 +3945,8 @@
+                 channel_prompt=next_channel_prompt, message_type=next_message_type,
+                 persist_user_message=next_persist_message,
+                 persist_user_display_kind=next_display_kind,
+-                persist_user_display_metadata=diagnostic_metadata(pending_event) or None,
++                persist_user_display_metadata={**diagnostic_metadata(pending_event),
++                    **message_author_metadata(pending_event, next_source)} or None,
+             )
+         except asyncio.CancelledError:
+             await _run_followup_processing_hook(
+--- a/hermes/gateway/slack_workspace.py
++++ b/hermes/gateway/slack_workspace.py
+@@ -137,8 +137,8 @@
+                 from model_tools import get_tool_definitions
+                 definitions = get_tool_definitions(enabled_toolsets=['clanker_browser'], quiet_mode=True)
+                 from vault.tools import TOOLS as vault_tools
+-                from seatbelt.plugin import browser_tools, discovery_tools
+-                if {item['function']['name'] for item in definitions} != {*browser_tools(),*discovery_tools(),'terminal',*vault_tools}:
++                from seatbelt.plugin import browser_tools, discovery_tools, recall_tools
++                if {item['function']['name'] for item in definitions} != {*browser_tools(),*discovery_tools(),*recall_tools(),'terminal',*vault_tools}:
+                     raise RuntimeError('Native browser tool surface is not ready')
+             return True
+         except Exception:
+--- /dev/null
++++ b/hermes/gateway/message_author.py
+@@ -0,0 +1,20 @@
++"""Persist the admitted message's author, without treating backfill as their words."""
++
++from agent.gateway_context import isolated_gateway_task
++
++
++def message_author_metadata(event, source):
++    if (event is None or source is None or getattr(event, 'internal', False) or
++            getattr(source, 'is_bot', False) or isolated_gateway_task(source) is not None or
++            not getattr(event, 'message_id', None)):
++        return {}
++    text = getattr(event, 'text', None)
++    if not isinstance(text, str):
++        return {}
++    platform = getattr(source.platform, 'value', source.platform)
++    return {'gateway_sender': {
++        'platform': platform, 'scope_id': source.scope_id,
++        'chat_id': source.chat_id, 'chat_type': source.chat_type,
++        'user_id': source.user_id, 'thread_id': source.thread_id,
++        'message_id': str(event.message_id), 'text': text,
++    }}
+--- /dev/null
++++ b/hermes/tests/gateway/test_message_author.py
+@@ -0,0 +1,35 @@
++"""Persisted authorship follows the event envelope, not backfill or a shared thread owner."""
++from types import SimpleNamespace
++
++from gateway.config import Platform
++from gateway.message_author import message_author_metadata
++from gateway.platforms.event import MessageEvent
++from gateway.run import GatewayRunner
++from gateway.session import SessionSource
++
++
++def test_message_author_is_per_event_and_preserved_in_failure_transcript():
++    prepared = SimpleNamespace(persist_user_message=None, message_text='BACKFILL_CANARY',
++        persist_user_timestamp=None, persist_user_display_kind=None, persistence_owner='input-owner')
++    for user in ('UA', 'UB', 'UA'):
++        source = SessionSource(Platform.SLACK, 'CSHARED', chat_type='group', scope_id='TT', user_id=user,
++                               thread_id='100.1')
++        event = MessageEvent('I want to fly to Mumbai', source=source, message_id='100.2',
++            channel_context='OTHER_PERSON_CANARY', metadata={'gateway_sender': {'user_id': 'FORGED'}})
++        metadata = message_author_metadata(event, source)
++        author = metadata['gateway_sender']
++        assert author['user_id'] == user and author['text'] == event.text
++        assert 'CANARY' not in repr(metadata) and 'FORGED' not in repr(metadata)
++        row = GatewayRunner._hmwa_user_transcript_entry(event, prepared, 1)
++        assert row['display_metadata']['gateway_sender'] == author
++        assert row['display_metadata']['gateway_input_owner'] == prepared.persistence_owner
++
++
++def test_internal_and_bot_events_cannot_become_a_users_past_statement():
++    source = SessionSource(Platform.SLACK, 'CSHARED', scope_id='TT', user_id='UA')
++    event = MessageEvent('Synthetic continuation', source=source, message_id='100.2', internal=True)
++    assert message_author_metadata(event, source) == {}
++    event.internal = False
++    source.is_bot = True
++    assert message_author_metadata(event, source) == {}
++    assert message_author_metadata(None, source) == {}

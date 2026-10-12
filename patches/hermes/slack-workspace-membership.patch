@@ -1,0 +1,130 @@
+diff --git a/hermes/gateway/run.py b/hermes/gateway/run.py
+index 20071c3..744b7e4 100644
+--- a/hermes/gateway/run.py
++++ b/hermes/gateway/run.py
+@@ -4085,6 +4085,11 @@ class GatewayRunner(
+         self, source: SessionSource, *, allow_adapter_delegation: bool = True) -> bool:
+         """Authorize under the live transport's profile, not the routed runtime (which need not copy the
+         shared bot token/allowlist); the transport home is stamped on the source for this read only."""
++        from gateway.slack_workspace import workspace_policy
++        policy = workspace_policy(self, source)
++        if policy is not None:
++            return policy.authorize_source(source)
++
+         def _check() -> bool:
+             # Keep the one-argument seam used by plugins/tests; pass the keyword only when disabling.
+             if allow_adapter_delegation:
+@@ -4446,6 +4451,10 @@ class GatewayRunner(
+         config = getattr(self, "config", None)
+         if not getattr(config, "multiplex_profiles", False):
+             return None
++        from gateway.slack_workspace import workspace_policy
++        policy = workspace_policy(self, source)
++        if policy is not None:
++            return policy.route(source)
+         routes = getattr(config, "profile_routes", None)
+         if not routes:
+             return None
+diff --git a/hermes/plugins/platforms/slack/adapter.py b/hermes/plugins/platforms/slack/adapter.py
+index 01a32c4..c5fc6d5 100644
+--- a/hermes/plugins/platforms/slack/adapter.py
++++ b/hermes/plugins/platforms/slack/adapter.py
+@@ -1598,6 +1598,30 @@ class SlackAdapter(BasePlatformAdapter):
+         except Exception:  # pragma: no cover - diagnostics must never break connect
+             pass
+ 
++    async def _handle_workspace_membership_event(self, event, body):
++        policy = getattr(self, "_workspace_membership", None)
++        if policy is not None:
++            try:
++                await policy.handle_event(event, body)
++            except Exception:
++                logger.exception("[Slack onboarding] event processing failed; reconciliation will retry")
++
++    def _is_sender_authorized(self, user_id, chat_type=None, chat_id=None, *, is_bot=False, thread_id=None):
++        policy = getattr(self, "_workspace_membership", None)
++        if policy is not None:
++            return not is_bot and policy.authorize_sender(user_id, chat_id)
++        return super()._is_sender_authorized(user_id, chat_type, chat_id, is_bot=is_bot, thread_id=thread_id)
++
++    async def _cancel_workspace_membership(self):
++        task = getattr(self, "_workspace_membership_task", None)
++        self._workspace_membership_task = None
++        if task is not None:
++            task.cancel()
++            try:
++                await task
++            except asyncio.CancelledError:
++                pass
++
+     def _register_bolt_handlers(self) -> None:
+         """Wire every Bolt listener onto ``self._app``; must run before Socket Mode starts."""
+         # Bolt injects listener args by NAME (None for unknown), so every handler takes
+@@ -1619,6 +1643,10 @@ class SlackAdapter(BasePlatformAdapter):
+             return _listener
+ 
+         for event_type, handler in (
++            ("team_join", self._handle_workspace_membership_event),
++            ("user_change", self._handle_workspace_membership_event),
++            ("member_joined_channel", self._handle_workspace_membership_event),
++            ("member_left_channel", self._handle_workspace_membership_event),
+             ("message", self._handle_slack_message), ("app_mention", self._handle_slack_message),
+             ("app_home_opened", self._handle_app_home_opened),
+             ("app_context_changed", self._handle_app_context_changed),
+@@ -1791,6 +1819,7 @@ class SlackAdapter(BasePlatformAdapter):
+                 return False
+             lock_acquired = True
+             self._running = False
++            await self._cancel_workspace_membership()
+             # Cancel AND await the old watchdog so it can't see _running=False,
+             # exit, and leave no monitor behind.
+             await self._cancel_socket_watchdog("[Slack] Prior watchdog task failed while stopping")
+@@ -1814,6 +1843,14 @@ class SlackAdapter(BasePlatformAdapter):
+             _apply_slack_proxy(self._app.client, proxy_url)
+             for token in bot_tokens:
+                 await self._authenticate_workspace(token, proxy_url)
++            settings = self.config.extra.get("workspace_membership", {})
++            self._workspace_membership = None
++            if settings.get("enabled"):
++                from gateway.slack_workspace import SlackWorkspaceMembership
++                from hermes_constants import get_process_hermes_home
++                if settings.get("workspace_id") not in self._team_clients:
++                    raise ValueError("Configured onboarding workspace does not match the bot installation")
++                self._workspace_membership = SlackWorkspaceMembership(self, get_process_hermes_home(), settings)
+             self._register_bolt_handlers()
+             # _running=True only once the handler is alive (watchdog needs the live
+             # task); on failure keep it False so ``finally`` releases the lock.
+@@ -1821,6 +1858,8 @@ class SlackAdapter(BasePlatformAdapter):
+                 self._start_socket_mode_handler()
+                 self._running = True
+                 self._ensure_socket_watchdog()
++                if self._workspace_membership is not None:
++                    self._workspace_membership_task = asyncio.create_task(self._workspace_membership.run())
+             except Exception:
+                 self._running = False
+                 try:
+@@ -1894,6 +1933,7 @@ class SlackAdapter(BasePlatformAdapter):
+     async def disconnect(self) -> None:
+         """Disconnect from Slack."""
+         self._running = False
++        await self._cancel_workspace_membership()
+         # Seal dangling native streams so no live-typing indicator survives a restart.
+         for chat_id, stream in list(self._active_streams.items()):
+             await self._seal_stream(chat_id, stream)
+@@ -4495,7 +4535,15 @@ class SlackAdapter(BasePlatformAdapter):
+         is_one_to_one_dm = channel_type == "im"
+         # Reject unauthorized users before the expensive lookups/downloads;
+         # the runner's own auth check only runs after MessageEvent is built.
+-        if self._early_reject_unauthorized(user_id, channel_id, is_dm):
++        policy = getattr(self, "_workspace_membership", None)
++        if policy is not None:
++            try:
++                if not await policy.prepare_message(user_id, channel_id, team_id):
++                    return
++            except Exception:
++                logger.exception("[Slack onboarding] message membership check failed")
++                return
++        elif self._early_reject_unauthorized(user_id, channel_id, is_dm):
+             return
+         thread_ts = self._session_thread_ts(event, ts, is_dm, assistant_meta)
+         bot_uid = self._team_bot_user_ids.get(team_id, self._bot_user_id)

@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Verify scoped Clanker Kernel browsing with two synthetic owners and no Slack messages."""
+import argparse
+from contextlib import contextmanager
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
+import uuid
+
+ROOT = Path(__file__).resolve().parents[1]
+PYTHON = ROOT / '.local/hermes-lab/venv/bin/python'
+if Path(sys.prefix).resolve() != PYTHON.parent.parent.resolve():
+    os.execv(str(PYTHON), [str(PYTHON), __file__, *sys.argv[1:]])
+sys.path[:0] = [str(ROOT / 'runtime'), str(ROOT / 'hermes')]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--trial-home', type=Path, required=True, help='Isolated Kernel trial with privately saved key and pinned plugin.')
+    parser.add_argument('--fleet-home', type=Path, default=ROOT / '.local/hermes-lab/home', help='Accepted local execution installation; read only.')
+    args = parser.parse_args()
+    from dotenv import dotenv_values, set_key
+    from seatbelt.install import activate_context, write
+    from cloud_browser.kernel_client import COMMIT, validate_kernel_settings
+    from vault.service import Binding, VaultService
+    from agent.gateway_context import gateway_turn_scope
+    from agent.vault_store import VaultStore
+    from gateway.config import Platform
+    from gateway.session import SessionSource
+    from gateway.run import _profile_runtime_scope
+    from tools.browser_supervisor import SUPERVISOR_REGISTRY
+
+    trial = args.trial_home.resolve(strict=True)
+    fleet_home = args.fleet_home.resolve(strict=True)
+    live_settings = validate_kernel_settings(json.loads((fleet_home / '.clanker-cloud/config.json').read_text()))
+    key = dotenv_values(fleet_home / '.env', interpolate=False).get('KERNEL_API_KEY')
+    if not key:
+        parser.error('The protected fleet key is missing.')
+    directory = ROOT / '.local/kernel-integration-20261008' / ('live-' + uuid.uuid4().hex[:8])
+    home = directory / 'gateway'
+    home.mkdir(parents=True, mode=0o700)
+    write(home / '.env', '')
+    set_key(str(home / '.env'), 'KERNEL_API_KEY', key)
+    del key
+    plugin = home / '.clanker-cloud/vendor/kernel'
+    plugin.mkdir(parents=True, mode=0o700)
+    shutil.copy2(trial / 'plugins/browser-kernel/provider.py', plugin / 'provider.py')
+    (plugin / 'provider.py').chmod(0o600)
+    isolated_settings = {'enabled': True, 'provider': 'kernel',
+        'plugin_path': str(plugin), 'plugin_commit': COMMIT}
+    if 'proxy' in live_settings:
+        isolated_settings['proxy'] = live_settings['proxy']
+    write(home / '.clanker-cloud/config.json', json.dumps(isolated_settings))
+    fleet = home / '.clanker-execution'
+    original = fleet_home / '.clanker-execution'
+    settings = json.loads((original / 'fleet.json').read_text())
+    settings['transport_home'] = str(home)
+    write(fleet / 'fleet.json', json.dumps(settings))
+    write(fleet / 'proxy.json', (original / 'proxy.json').read_text())
+    for owner in ('UA', 'UB'):
+        target = home / 'profiles' / owner
+        target.mkdir(parents=True, mode=0o700)
+        write(target / '.env', '')
+        write(target / 'config.yaml', '{}\n')
+        activate_context(target, fleet)
+    policy = SimpleNamespace(home=home, team='KERNEL_SMOKE',
+        state={'members': {owner: {'profile': owner, 'status': 'ready', 'dm_id': 'D' + owner}
+            for owner in ('UA', 'UB')}, 'conversations': {'DUA': {'kind': 'dm'}, 'DUB': {'kind': 'dm'}}},
+        authorize_source=lambda source: source.scope_id == 'KERNEL_SMOKE' and source.profile == source.user_id
+            and source.chat_id == 'D' + source.user_id)
+    service = VaultService(policy, {'public_url': 'https://vault.example.invalid', 'client_id': 'smoke'})
+    policy.vault_service = service
+    shared_task_id = 'kernel-smoke-shared-' + uuid.uuid4().hex[:8]
+    turns = {owner: Binding(service, SessionSource(Platform.SLACK, 'D' + owner, user_id=owner,
+        scope_id='KERNEL_SMOKE', profile=owner, thread_id='smoke'), shared_task_id,
+        'Read the public fixture page.', service.private_home('KERNEL_SMOKE', owner)) for owner in ('UA', 'UB')}
+    @contextmanager
+    def scope(turn):
+        with patch('gateway.slack_workspace.workspace_policy', return_value=policy):
+            with _profile_runtime_scope(turn.home):
+                with gateway_turn_scope(object(), turn.source, turn.task_id, turn.message):
+                    yield
+    from hermes_cli.plugins import discover_plugins
+    from model_tools import get_tool_definitions, handle_function_call
+    from tools import browser_tool
+    receipts = {}
+    sessions = {}
+    report = {'passed': False, 'slack_messages': 0, 'website_submissions': 0,
+        'same_logical_task_separate_native_keys': len({service.cloud_browser.native_task_id(turn) for turn in turns.values()}) == 2}
+    try:
+        for owner in ('UA', 'UB', 'UA'):
+            turn = turns[owner]
+            with scope(turn):
+                discover_plugins()
+                definitions = get_tool_definitions(enabled_toolsets=['clanker_browser'], quiet_mode=True)
+                names = [item['function']['name'] for item in definitions]
+                assert 'browser_navigate' in names and 'browser_cdp' not in names and 'clanker_browser_run' not in names
+                navigate = json.loads(handle_function_call('browser_navigate', {'url': 'https://example.com'},
+                    task_id=turn.task_id, enabled_tools=names))
+                if not navigate.get('success'):
+                    report['navigation_error'] = {field: navigate.get(field) for field in ('error', 'status')}
+                assert navigate.get('success') is True and navigate.get('title') == 'Example Domain'
+                snapshot = json.loads(handle_function_call('browser_snapshot', {}, task_id=turn.task_id, enabled_tools=names))
+                assert snapshot.get('success') is True
+                current = browser_tool._active_sessions[service.cloud_browser.native_task_id(turn)]
+                assert not current.get('fallback_from_cloud')
+                if owner in sessions:
+                    assert sessions[owner] == current['bb_session_id']
+                sessions[owner] = current['bb_session_id']
+                assert len(set(sessions.values())) == len(sessions)
+                _, owned = service.cloud_browser.state(turn)
+                _, entry = service.cloud_browser.selected(turn, owned)
+                assert entry.get('proxy_policy') == live_settings.get('proxy')
+                assert service.cloud_browser.check_remote(entry) is True
+                receipts[owner] = {'title': navigate['title'], 'snapshot_success': True,
+                    'remote_identity_verified': True, 'configured_proxy_verified': True}
+        turn = turns['UA']
+        with scope(turn):
+            supervisor = SUPERVISOR_REGISTRY.get(service.cloud_browser.native_task_id(turn))
+            focused = supervisor.focus_page('https://example.com')
+            assert focused.get('ok')
+            fixture = supervisor.evaluate_runtime("document.body.innerHTML='<form><label>Password<input name=\"password\" type=\"password\" autocomplete=\"current-password\"></label></form>'; true")
+            assert fixture.get('ok')
+            dummy = 'kernel-private-fixture-' + uuid.uuid4().hex
+            meta = VaultStore(turn.home / 'vault').add_item('login', 'Synthetic public page fixture',
+                {'password': dummy, 'identifier': 'fixture@example.invalid', 'identifier_type': 'email'}, origin='https://example.com')
+            result = json.loads(handle_function_call('clanker_vault_fill', {'handle': meta.id}, task_id=turn.task_id, enabled_tools=names))
+            if not result.get('success'):
+                report['private_fill_error'] = {field: result.get(field) for field in ('error', 'status', 'filled_fields')}
+            assert result.get('success') is True and result.get('filled_fields') == 1 and dummy not in json.dumps(result)
+            # Compare in the trusted supervisor and return only a boolean. No
+            # saved or entered values pass through the model-facing dispatcher.
+            confirmed = supervisor.evaluate_runtime('document.querySelector("input").value === ' + json.dumps(dummy))
+            assert confirmed.get('ok') and confirmed.get('result') is True
+            scrubbed = service.cloud_browser.finish(turn, json.dumps({'text': dummy}))
+            assert dummy not in scrubbed
+            report['native_private_password_fill'] = True
+            report['filled_value_redacted'] = True
+        report.update(provider='kernel', owners=receipts, separate_remote_sessions=True,
+            a_b_a_reused_only_own_session=True, local_fallback=False, discovery_scoped=True,
+            production_proxy_policy_used=True,
+            residential_india=live_settings.get('proxy', {}).get('country') == 'IN')
+    finally:
+        for owner, turn in turns.items():
+            with scope(turn):
+                service.cloud_browser.stop(turn, purge=True)
+        report['cleanup_verified'] = all(service.cloud_browser.client.get_session(sid) is None for sid in sessions.values())
+        report['passed'] = report.get('native_private_password_fill') is True and report['cleanup_verified']
+        receipt = directory / 'result.json'
+        write(receipt, json.dumps(report, indent=2) + '\n')
+        print(json.dumps(report, indent=2))
+        print('Receipt: ' + str(receipt))
+    return 0 if report['passed'] else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

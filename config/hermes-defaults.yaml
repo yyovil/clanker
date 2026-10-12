@@ -1,0 +1,24 @@
+# Initial local baseline. This separates configuration, not OS permissions.
+# Keep automatic reuse of the owner's existing logins disabled.
+auth:
+  adopt_external_logins: false
+security:
+  allow_lazy_installs: false
+display:
+  personality: ""
+  tool_progress: "off"
+  tool_progress_command: false
+  platforms:
+    slack:
+      busy_ack_detail: false
+      live_status: "off"
+onboarding:
+  enabled: false
+  profile_build: "off"
+gateway:
+  platforms:
+    slack:
+      mention_reply_user: true
+clanker:
+  public_web:
+    enabled: true

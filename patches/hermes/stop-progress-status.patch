@@ -1,0 +1,657 @@
+diff --git a/hermes/gateway/platforms/base.py b/hermes/gateway/platforms/base.py
+--- a/hermes/gateway/platforms/base.py
++++ b/hermes/gateway/platforms/base.py
+@@ -1961,6 +1961,7 @@
+         self._streaming_tts_completed_turns: set[str] = set()
+         # Chats whose typing indicator is paused (approval waits); _keep_typing skips them.
+         self._typing_paused: set = set()
++        self._typing_paused_sessions: Dict[str, asyncio.Event | None] = {}
+         # Per-chat status phrase; the regular _keep_typing refresh renders it (no extra API calls).
+         self._status_text: Dict[str, str] = {}
+ 
+@@ -3313,7 +3314,7 @@
+         return list(unique), re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+ 
+     async def _keep_typing(self, chat_id: str, interval: float = 2.0, metadata=None,
+-                           stop_event: asyncio.Event | None = None) -> None:
++                           stop_event: asyncio.Event | None = None, session_key: str | None = None) -> None:
+         """Refresh the typing indicator every ``interval`` seconds until cancelled (platform typing
+         state expires after ~5s). Chats in ``_typing_paused`` are skipped (approval waits — Slack's
+         setStatus disables the compose box). Each ``send_typing`` is bounded by a sub-interval
+@@ -3323,7 +3324,9 @@
+             while True:
+                 if stop_event is not None and stop_event.is_set():
+                     return
+-                if chat_id not in self._typing_paused:
++                paused = getattr(self, '_typing_paused_sessions', {})
++                session_paused = session_key in paused and paused[session_key] is stop_event
++                if chat_id not in self._typing_paused and not session_paused:
+                     try:
+                         await asyncio.wait_for(self.send_typing(chat_id, metadata=metadata),
+                                                timeout=_send_typing_timeout)
+@@ -3351,6 +3354,9 @@
+             self._typing_paused.discard(chat_id)
+             # getattr-guard: tests build adapters via object.__new__ without _status_text.
+             getattr(self, "_status_text", {}).pop(str(chat_id), None)
++            paused = getattr(self, '_typing_paused_sessions', {})
++            if session_key in paused and paused[session_key] is stop_event:
++                paused.pop(session_key, None)
+ 
+     async def _stop_typing_refresh(
+         self, chat_id: str, typing_task: asyncio.Task | None = None, *, metadata=None,
+@@ -3382,6 +3388,15 @@
+     def resume_typing_for_chat(self, chat_id: str) -> None:
+         """Resume typing indicator for a chat after approval resolves."""
+         self._typing_paused.discard(chat_id)
++
++    def pause_typing_for_session(self, session_key: str) -> None:
++        """Pause only the current session's refresh loop, leaving other threads live."""
++        _lazy_attr(self, '_typing_paused_sessions', dict)[session_key] = self._active_sessions.get(session_key)
++
++    def resume_typing_for_session(self, session_key: str) -> None:
++        paused = getattr(self, '_typing_paused_sessions', {})
++        if session_key in paused and paused[session_key] is self._active_sessions.get(session_key):
++            paused.pop(session_key, None)
+ 
+     async def interrupt_session_activity(self, session_key: str, chat_id: str, metadata=None) -> None:
+         """Signal the active session loop to stop and clear typing immediately."""
+@@ -4347,6 +4362,8 @@
+         kwargs: Dict[str, Any] = {"metadata": metadata}
+         if self._accepts_kwarg(self._keep_typing, "stop_event", var_kw=False, unknown=True):
+             kwargs["stop_event"] = interrupt_event
++        if self._accepts_kwarg(self._keep_typing, "session_key", var_kw=False, unknown=True):
++            kwargs["session_key"] = self._source_session_key(event.source)
+         return asyncio.create_task(self._keep_typing(event.source.chat_id, **kwargs))
+ 
+     async def _extract_response_content(self, response: str, event: MessageEvent, session_key: str,
+diff --git a/hermes/gateway/run_agent_cache.py b/hermes/gateway/run_agent_cache.py
+--- a/hermes/gateway/run_agent_cache.py
++++ b/hermes/gateway/run_agent_cache.py
+@@ -486,6 +486,9 @@
+         """Interrupt the current run and clear queued session state consistently."""
+         if not session_key:
+             return
++        if self._busy_stop_cleanup_owns(session_key):
++            return  # already hard-interrupted; its reporting slot stays owned through cleanup
++        await self._await_busy_stop(session_key)
+         state = self._peek_session_state(session_key)
+         running_agent = state.turn.agent if state else None
+         _generation_at_interrupt = self._interrupt_running_turn(
+diff --git a/hermes/gateway/run_busy.py b/hermes/gateway/run_busy.py
+--- a/hermes/gateway/run_busy.py
++++ b/hermes/gateway/run_busy.py
+@@ -11,8 +11,10 @@
+ from typing import TYPE_CHECKING
+ import asyncio
+ import contextlib
++from contextvars import ContextVar
+ import json
+ import os
++import re
+ import time
+ from agent.i18n import t
+ from agent.session_activity import format_iteration_progress
+@@ -29,6 +31,22 @@
+ 
+ # Log-record parity with the origin module.
+ logger = logging.getLogger("gateway.run")
++_busy_stop_cleanup_context = ContextVar('busy_stop_cleanup_context', default=None)
++
++
++def _is_busy_stop_request(event: MessageEvent) -> bool:
++    """Recognize whole-task cancellation, never a task boundary or quoted instruction."""
++    if event.internal or event.message_type != MessageType.TEXT or event.media_urls or event.media_types:
++        return False
++    text = ' '.join((event.text or '').replace('’', "'").split())
++    return re.fullmatch(
++        r"(?:(?:actually|please)[, ]+){0,2}"
++        r"(?:stop(?: (?:working|(?:the|this|my) (?:task|request|run)))?|"
++        r"cancel(?: (?:the|this|my) (?:task|request|run))?|never ?mind)"
++        r"(?: now)?(?: please)?[.! ,]*"
++        r"(?:i(?:'ll| will) (?:handle (?:it|this)|sort (?:it|this) out|take it from here)"
++        r"(?: myself)?[.!]*)?", text, re.IGNORECASE,
++    ) is not None
+ 
+ 
+ def _strip_slot(text: str, slot: str) -> Optional[str]:
+@@ -767,6 +785,89 @@
+         except Exception as e:
+             logger.debug("Failed to send busy-ack: %s", e)
+ 
++    async def _await_busy_stop(self, session_key: str) -> None:
++        state = self._peek_session_state(session_key)
++        completion = state.turn.stop_completion if state else None
++        if completion is not None:
++            await asyncio.shield(completion)
++
++    def _busy_stop_cleanup_owns(self, session_key: str) -> bool:
++        state = self._peek_session_state(session_key)
++        return bool(state and state.turn.stop_requested and _busy_stop_cleanup_context.get()
++                    == (session_key, id(state.turn), id(state.turn.stop_report)))
++
++    async def _complete_busy_stop(self, event: MessageEvent, session_key: str, adapter, state) -> None:
++        from gateway.plugin_control import notify_gateway_control
++
++        async def cleanup():
++            token = _busy_stop_cleanup_context.set((session_key, id(state.turn), id(event)))
++            try:
++                if callable(getattr(type(adapter), '_stop_typing_quietly', None)):
++                    await adapter._stop_typing_quietly(
++                        event.source.chat_id, self._thread_metadata_for_source(event.source)
++                    )
++                results = await notify_gateway_control(self, event.source, 'stop')
++                if any(isinstance(result, dict) and result.get('cleanup_pending') for result in results):
++                    state.conversation.sidecar_notes.append(
++                        "Some stop cleanup is still pending. Verify it before claiming everything has stopped."
++                    )
++            finally:
++                _busy_stop_cleanup_context.reset(token)
++
++        results = await asyncio.gather(
++            self._send_busy_ack_reply(event, adapter, "Stopping. I’ll confirm once the current work has settled."),
++            cleanup(), return_exceptions=True,
++        )
++        if any(isinstance(result, BaseException) for result in results):
++            logger.warning("Busy stop cleanup did not complete successfully for %s", session_key)
++            state.conversation.sidecar_notes.append(
++                "Stop cleanup failed. Verify external cleanup before claiming everything has stopped."
++            )
++
++    async def _request_busy_stop(self, event: MessageEvent, session_key: str, adapter, state) -> None:
++        """Cancel immediately, retaining the active slot until work settles and reports."""
++        from agent.interrupt_compat import request_hard_interrupt
++        from gateway.run import _AGENT_PENDING_SENTINEL
++        agent = state.turn.agent if state else None
++        if state and state.turn.stop_completion is not None and not state.turn.stop_completion.done():
++            await self._await_busy_stop(session_key)
++            return
++        accepted = False
++        if agent is not None and agent is not _AGENT_PENDING_SENTINEL:
++            try:
++                accepted = request_hard_interrupt(agent, event.text)
++            except Exception:
++                logger.warning("Failed to request busy stop for %s", session_key, exc_info=True)
++        if not accepted:
++            await self._send_busy_ack_reply(
++                event, adapter, "I couldn’t stop the current work. It has not stopped; use /stop to retry."
++            )
++            return
++
++        state.turn.stop_requested = True
++        state.turn.stop_report = event
++        if callable(getattr(type(adapter), 'pause_typing_for_session', None)):
++            adapter.pause_typing_for_session(session_key)
++            adapter.set_status_text(event.source.chat_id, None)
++        # Supersede queued human work, but retain claimed internal completions. The
++        # cancellation report runs only after the interrupted executor has settled.
++        parked = adapter._pending_messages.get(session_key)
++        wakes = [queued for queued in state.conversation.queued_events if queued.internal]
++        if parked is not None and parked.internal:
++            wakes.insert(0, parked)
++        state.conversation.queued_events[:] = wakes
++        adapter._pending_messages[session_key] = event
++        event._gateway_accepted = True
++        from tools.async_delegation import interrupt_for_session
++        interrupt_for_session(
++            session_key=session_key, parent_session_id=str(getattr(agent, 'session_id', '') or ''),
++            reason='stop_command',
++        )
++        state.turn.stop_completion = asyncio.create_task(
++            self._complete_busy_stop(event, session_key, adapter, state)
++        )
++        await self._await_busy_stop(session_key)
++
+     async def _handle_active_session_busy_message(self, event: MessageEvent, session_key: str) -> bool:
+         # Gateway wakes have no external user identity. Admit them before auth/drain/approval
+         # handling, without merging their text into an already queued human message.
+@@ -809,15 +910,20 @@
+         if getattr(event, "internal", False):
+             self._queue_or_replace_pending_event(session_key, event)
+             return True
++        stopping = _is_busy_stop_request(event)
+         if (
+             event.message_type == MessageType.TEXT
+             and self._effective_busy_text_mode(event.source) == "queue"
+             and effective_mode != "steer"
++            and not stopping
+         ):
+             return False
+ 
+         _busy_state = self._peek_session_state(session_key)
+         running_agent = _busy_state.turn.agent if _busy_state else None
++        if stopping:
++            await self._request_busy_stop(event, session_key, adapter, _busy_state)
++            return True
+         _steer = await self._resolve_busy_steer_or_redirect(event, session_key, effective_mode, running_agent)
+         effective_mode, redirected = _steer.effective_mode, _steer.redirected
+         # Queue as the next turn — skipped after a successful steer/redirect (the text is already in
+diff --git a/hermes/gateway/run_shutdown.py b/hermes/gateway/run_shutdown.py
+--- a/hermes/gateway/run_shutdown.py
++++ b/hermes/gateway/run_shutdown.py
+@@ -1184,6 +1184,8 @@
+             _hb_state = self._peek_session_state(session_key)
+             if (_hb_state.turn.agent if _hb_state else None) is not agent:
+                 return False
++            if _hb_state.turn.stop_requested:
++                return False
+         return True
+ 
+     def _defer_agent_cleanup_until_future_done(self, future: asyncio.Future, agent: Any, *, context: str) -> None:
+diff --git a/hermes/gateway/run_turn.py b/hermes/gateway/run_turn.py
+--- a/hermes/gateway/run_turn.py
++++ b/hermes/gateway/run_turn.py
+@@ -3693,6 +3693,8 @@
+         )
+         pending_event = None
+         pending = None
++        if session_key:
++            await self._await_busy_stop(session_key)
+         if result and adapter and session_key:
+             pending_event = _dequeue_pending_event(adapter, session_key)
+             # /queue overflow: promote the next queued event into the consumed "next-up" slot so the
+@@ -3920,8 +3922,16 @@
+             if _pk:
+                 _completed_turns.discard(_pk)
+ 
+-        # Restart the typing indicator; the outer typing task may be stale.
+-        if _clear_adapter:
++        stop_state = self._peek_session_state(session_key) if session_key else None
++        stop_report = bool(stop_state and stop_state.turn.stop_requested
++                           and stop_state.turn.stop_report is pending_event)
++        if stop_state and stop_state.turn.stop_requested and not stop_report:
++            stop_state.turn.stop_requested = False
++            stop_state.turn.stop_report = stop_state.turn.stop_completion = None
++            if callable(getattr(type(_clear_adapter), 'resume_typing_for_session', None)):
++                _clear_adapter.resume_typing_for_session(session_key)
++        # A cancellation report stays quiet; a subsequent request resumes typing.
++        if _clear_adapter and not stop_report:
+             with suppress(Exception):
+                 await _clear_adapter.send_typing(source.chat_id, metadata=_status_thread_metadata)
+ 
+@@ -3994,6 +4004,8 @@
+     ) -> None:
+         """``finally`` half of a turn: cancel background tasks, flush stream, release the session slot."""
+         stream_consumer_holder, session_key = turn_ctx.stream_consumer_holder, turn_ctx.session_key
++        if session_key:
++            await self._await_busy_stop(session_key)
+         for task in (progress_task, log_task, interrupt_monitor, _notify_task):
+             if task:
+                 task.cancel()
+diff --git a/hermes/gateway/run_turn_runner.py b/hermes/gateway/run_turn_runner.py
+--- a/hermes/gateway/run_turn_runner.py
++++ b/hermes/gateway/run_turn_runner.py
+@@ -96,6 +96,10 @@
+         """True once the user sent `stop` (agent_holder[0] is the shared agent handle)."""
+         try:
+             agent = self._ctx.agent_holder[0] if self._ctx.agent_holder else None
++            peek = getattr(self._runner, '_peek_session_state', None)
++            state = peek(self._ctx.session_key) if callable(peek) and self._ctx.session_key else None
++            if state and state.turn.agent is agent and getattr(state.turn, 'stop_requested', False) is True:
++                return True
+             return bool(agent is not None and getattr(agent, "is_interrupted", False))
+         except Exception:
+             return False
+@@ -203,7 +207,7 @@
+         _keep_typing refresh renders it. Plain dict write, safe from the sync worker thread."""
+         ctx = self._ctx
+         adapter = ctx._live_status_adapter
+-        if adapter is None or ctx._live_status_mode == "off" or tool_name == "_thinking":
++        if adapter is None or ctx._live_status_mode == "off" or tool_name == "_thinking" or self._agent_interrupted():
+             return
+         try:
+             if event_type == "tool.started" and tool_name and ctx._run_still_current():
+diff --git a/hermes/gateway/session_state.py b/hermes/gateway/session_state.py
+--- a/hermes/gateway/session_state.py
++++ b/hermes/gateway/session_state.py
+@@ -27,6 +27,9 @@
+     started_ts: float = 0.0  # 0.0 = not running
+     lease: Any = None  # cross-process active-session slot lease
+     busy_ack_ts: float = 0.0  # debounce; 0.0 = never acked
++    stop_requested: bool = False  # pending user cancellation suppresses work progress until settlement
++    stop_completion: Any = None  # owned receipt/cleanup task; drain and release must await it
++    stop_report: Any = None  # exact event allowed to retain suppression across a recursive handoff
+     # Held turn-lease tokens keyed by acquiring run generation: release/rebind resolve the
+     # token for their own generation, so a displaced turn's unwind frees only its own lease and
+     # never a successor's (an evicted turn and its replacement may both hold one briefly).
+@@ -36,6 +39,8 @@
+         """Reset the per-turn slot.  The caller pops ``lease`` first to release it."""
+         self.agent = self.lease = self.event = self.ctx = None
+         self.started_ts = self.busy_ack_ts = 0.0
++        self.stop_requested = False
++        self.stop_completion = self.stop_report = None
+ 
+ 
+ @dataclass
+diff --git a/hermes/tests/gateway/test_busy_stop_status.py b/hermes/tests/gateway/test_busy_stop_status.py
+new file mode 100644
+--- /dev/null
++++ b/hermes/tests/gateway/test_busy_stop_status.py
+@@ -0,0 +1,328 @@
++"""A pending plain-text stop gets truthful status without stale work heartbeats."""
++import asyncio
++import threading
++import time
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, MagicMock
++
++import pytest
++
++from gateway.platforms.base import Platform, build_session_key
++from gateway.turn_context import TurnContext
++from gateway.run_turn_runner import TurnRunner
++from agent.interrupt_control import InterruptControlMixin
++from tests.gateway.test_busy_session_ack import _make_event, _make_runner
++from tests.gateway.test_run_cleanup_progress import CleanupCaptureAdapter
++
++
++class HardStopAgent(InterruptControlMixin):
++    def __init__(self):
++        self._interrupt_requested = False
++        self._interrupt_message = None
++        self._hard_interrupt_requested = threading.Event()
++        self._execution_thread_id = None
++        self._active_children = []
++        self._active_children_lock = threading.Lock()
++        self.quiet_mode = True
++        self._supports_active_turn_redirect = True
++        self.redirect = MagicMock(return_value=True)
++        self.get_activity_summary = MagicMock(return_value={})
++        self.hard_interrupt = MagicMock(wraps=self.hard_interrupt)
++
++    @property
++    def is_interrupted(self):
++        return self._interrupt_requested
++
++
++def active_turn(monkeypatch, text):
++    import gateway.run as gateway_run
++    monkeypatch.setattr(gateway_run, '_load_gateway_config', lambda: {'onboarding': {'enabled': False}})
++    monkeypatch.setattr('gateway.plugin_control.notify_gateway_control', AsyncMock(return_value=[]))
++    monkeypatch.setattr('tools.async_delegation.interrupt_for_session', MagicMock(return_value=0))
++    runner, _ = _make_runner()
++    runner._busy_input_mode = 'interrupt'
++    runner._restart_requested = False
++    event = _make_event(text=text)
++    event.source.platform = Platform.SLACK
++    adapter = CleanupCaptureAdapter(Platform.SLACK)
++    adapter._send_with_retry = AsyncMock()
++    adapter.set_status_text = MagicMock(wraps=adapter.set_status_text)
++    adapter._source_session_key = build_session_key
++    adapter.send = AsyncMock(return_value=SimpleNamespace(success=True, message_id='heartbeat'))
++    runner.adapters[event.source.platform] = adapter
++    key = build_session_key(event.source)
++    adapter._active_sessions[key] = asyncio.Event()
++    agent = MagicMock()
++    agent._supports_active_turn_redirect = True
++    agent.redirect.return_value = True
++    agent.is_interrupted = False
++    agent.get_activity_summary.return_value = {}
++    runner._running_agents[key] = agent
++    ctx = TurnContext(source=event.source, session_key=key, agent_holder=[agent],
++        _run_still_current=lambda: True, _live_status_adapter=adapter, _live_status_mode='full')
++    runner._session_state(key).turn.ctx = ctx
++    return runner, event, adapter, key, agent, ctx
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize('text, stopping, mode, control', [
++    ('Actually, stop. I’ll sort this out myself.', True, 'interrupt', 'redirect'),
++    ('Please stop.', True, 'interrupt', 'redirect'),
++    ('Stop the task now.', True, 'interrupt', 'redirect'),
++    ('Cancel this request.', True, 'interrupt', 'redirect'),
++    ('Never mind, I will handle it myself.', True, 'interrupt', 'redirect'),
++    ('Please stop.', True, 'queue', 'redirect'),
++    ('Please stop.', True, 'steer', 'redirect'),
++    ('Actually, make it two packets.', False, 'interrupt', 'redirect'),
++    ('Stop before payment.', False, 'interrupt', 'redirect'),
++    ('Do not stop.', False, 'interrupt', 'redirect'),
++    ("Don't stop.", False, 'interrupt', 'redirect'),
++    ('Did you stop?', False, 'interrupt', 'redirect'),
++    ('```text\nstop\n```', False, 'interrupt', 'redirect'),
++    ('"stop"', False, 'interrupt', 'redirect'),
++    ('Stop searching and compare the options.', False, 'interrupt', 'redirect'),
++    ('The page says "stop". Please continue.', False, 'interrupt', 'redirect'),
++    ('Please stop.', True, 'interrupt', 'subagents'),
++    ('Please stop.', True, 'interrupt', 'compression'),
++    ('Please stop.', True, 'interrupt', 'interrupt'),
++    ('Please stop.', True, 'interrupt', 'interrupt_failed'),
++    ('Please stop.', True, 'interrupt', 'no_interrupt'),
++    ('Actually, make it two packets.', False, 'interrupt', 'subagents'),
++    ('Actually, make it two packets.', False, 'interrupt', 'compression'),
++])
++async def test_stop_status_is_immediate_truthful_and_scoped_to_the_active_turn(monkeypatch, text, stopping, mode, control):
++    runner, event, adapter, key, agent, ctx = active_turn(monkeypatch, text)
++    runner._busy_input_mode = runner._busy_text_mode = mode
++    real_hard_stop = stopping and control in {'subagents', 'compression'}
++    if real_hard_stop:
++        agent = HardStopAgent()
++        runner._running_agents[key] = agent
++        ctx.agent_holder[0] = agent
++    if control == 'subagents':
++        agent._active_children = [HardStopAgent() if real_hard_stop else MagicMock()]
++    if control == 'compression':
++        runner._session_has_compression_in_flight = AsyncMock(return_value=True)
++    if control in {'interrupt', 'interrupt_failed', 'no_interrupt'}:
++        agent.redirect.return_value = False
++    if control == 'interrupt_failed':
++        agent.interrupt.side_effect = RuntimeError('control unavailable')
++    if control == 'no_interrupt':
++        agent.interrupt = None
++    accepted_stop = stopping and control not in {'interrupt_failed', 'no_interrupt'}
++    old_followup = _make_event(text='Continue with another item')
++    wake = _make_event(text='Background work completed')
++    wake.internal = True
++    if accepted_stop:
++        adapter._pending_messages[key] = old_followup
++        runner._session_state(key).conversation.queued_events = [old_followup, wake]
++    if stopping:
++        runner._session_state(key).turn.busy_ack_ts = time.time()  # cancellation must bypass ordinary debounce
++    pending = asyncio.get_running_loop().create_future()
++    adapter.set_status_text(event.source.chat_id, 'Searching the store')
++    adapter.set_status_text.reset_mock()
++    await runner._handle_active_session_busy_message(event, key)
++    adapter._send_with_retry.assert_awaited_once()
++    ack = adapter._send_with_retry.call_args.kwargs['content']
++    assert ('Stopping' in ack) is accepted_stop
++    assert 'Stopped' not in ack  # a pending operation is not a completed cancellation
++    if stopping:
++        agent.redirect.assert_not_called()
++        if real_hard_stop:
++            agent.hard_interrupt.assert_called_once_with(text)
++            assert agent._hard_interrupt_requested.is_set()
++            if control == 'subagents':
++                assert agent._active_children[0]._hard_interrupt_requested.is_set()
++        elif control != 'no_interrupt':
++            agent.interrupt.assert_called_once_with(text)
++    elif control in {'subagents', 'compression'}:
++        agent.redirect.assert_not_called()
++        agent.interrupt.assert_not_called()
++    else:
++        agent.redirect.assert_called_once()
++        assert agent.redirect.call_args.args[0].endswith(text)
++    if accepted_stop:
++        assert adapter._pending_messages[key] is event
++        assert runner._session_state(key).conversation.queued_events == [wake]
++        import tools.async_delegation as delegation
++        assert delegation.interrupt_for_session.call_args.kwargs['session_key'] == key
++    if stopping and not accepted_stop:
++        assert 'not stopped' in ack.lower()
++        assert key not in adapter._pending_messages
++    assert runner._should_emit_long_running_notification(key, agent, pending) is not accepted_stop
++    progress = TurnRunner(runner, ctx)
++    assert progress._agent_interrupted() is accepted_stop
++    if accepted_stop:
++        assert str(event.source.chat_id) not in adapter._status_text
++    adapter.set_status_text.reset_mock()
++    progress._progress_live_status('tool.started', 'browser_navigate', {})
++    assert adapter.set_status_text.called is not accepted_stop
++    assert not pending.done()
++    runner._session_state(key).turn.clear()
++    if real_hard_stop:
++        agent.clear_interrupt(hard_cancel=True)
++    runner._session_state(key).turn.agent = agent  # cached agent reused for a fresh turn
++    assert runner._should_emit_long_running_notification(key, agent, pending) is True
++    assert progress._agent_interrupted() is False
++    pending.cancel()
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize('lifecycle', ['heartbeat', 'typing', 'slow_ack', 'slow_cleanup', 'recursive',
++                                     'exception_cleanup', 'handler_cancelled', 'repeat_stop'])
++async def test_stop_lifecycle_waits_for_cleanup_and_preserves_later_work(monkeypatch, lifecycle):
++    if lifecycle == 'typing':
++        return await check_typing_after_stop(monkeypatch)
++    if lifecycle != 'heartbeat':
++        return await check_stop_drain_and_successor(monkeypatch, lifecycle)
++    monkeypatch.setenv('HERMES_AGENT_NOTIFY_INTERVAL', '0.01')
++    runner, event, adapter, key, agent, ctx = active_turn(monkeypatch, 'Actually, stop. I’ll sort this out myself.')
++    runner._agent_activity_summary = lambda unused: None
++    disp = MagicMock()
++    disp.user_config = {}
++    disp._display_surface_mode.return_value = 'generic'
++    disp._generic_status_phrase.return_value = 'Still working on your request.'
++    disp.resolve_display_setting.return_value = False
++    pending = asyncio.get_running_loop().create_future()
++    async def stop_during_edit(*args, **kwargs):
++        await runner._handle_active_session_busy_message(event, key)
++        return SimpleNamespace(success=False)
++    adapter.edit_message = AsyncMock(side_effect=stop_during_edit)
++    async def send(*args, **kwargs):
++        # Bound the pre-fix reproducer without depending on a timeout.
++        if adapter.send.await_count > 1:
++            pending.set_result(None)
++        return SimpleNamespace(success=True, message_id='heartbeat')
++    adapter.send.side_effect = send
++    await asyncio.wait_for(runner._run_agent_notify_long_running(disp, ctx, [pending]), 5)
++    assert adapter.send.await_count == 1
++    adapter.edit_message.assert_awaited_once()
++    assert 'Stopping' in adapter._send_with_retry.call_args.kwargs['content']
++    assert not pending.done()
++    pending.cancel()
++
++
++async def check_typing_after_stop(monkeypatch):
++    runner, event, adapter, key, agent, ctx = active_turn(monkeypatch, 'Please stop.')
++    other = _make_event(text='Unrelated work', chat_id=event.source.chat_id)
++    other.source.platform = Platform.SLACK
++    other.source.thread_id = 'other-thread'
++    other_key = build_session_key(other.source)
++    adapter._active_sessions[other_key] = asyncio.Event()
++    first_tick, later_tick = asyncio.Event(), asyncio.Event()
++    stopped = False
++    stale_ticks = []
++    async def typing(chat_id, metadata=None):
++        if not metadata:
++            if stopped:
++                stale_ticks.append(adapter._status_text.get(str(chat_id), 'default working'))
++            first_tick.set()
++        elif stopped:
++            later_tick.set()
++    adapter.send_typing = typing
++    adapter.set_status_text(event.source.chat_id, 'Searching the store')
++    tasks = [adapter._start_typing_refresh(e, adapter._active_sessions[k],
++                                          {'thread_id': e.source.thread_id} if e.source.thread_id else None)
++             for e, k in ((event, key), (other, other_key))]
++    try:
++        await asyncio.wait_for(first_tick.wait(), 5)
++        await runner._handle_active_session_busy_message(event, key)
++        stopped = True
++        await asyncio.wait_for(later_tick.wait(), 5)
++        assert not stale_ticks
++        assert str(event.source.chat_id) not in adapter._status_text
++    finally:
++        for task in tasks:
++            task.cancel()
++        await asyncio.gather(*tasks, return_exceptions=True)
++
++
++async def check_stop_drain_and_successor(monkeypatch, lifecycle):
++    runner, event, adapter, key, agent, ctx = active_turn(monkeypatch, 'Please stop.')
++    ack_entered, cleanup_entered = asyncio.Event(), asyncio.Event()
++    ack_release, cleanup_release = asyncio.Event(), asyncio.Event()
++    async def receipt(*args, **kwargs):
++        ack_entered.set()
++        await ack_release.wait()
++    async def cleanup(*args, **kwargs):
++        cleanup_entered.set()
++        await cleanup_release.wait()
++        return []
++    adapter._send_with_retry.side_effect = receipt
++    monkeypatch.setattr('gateway.plugin_control.notify_gateway_control', cleanup)
++    stop = asyncio.create_task(runner._handle_active_session_busy_message(event, key))
++    await asyncio.wait_for(ack_entered.wait(), 5)
++    if lifecycle != 'slow_ack':
++        ack_release.set()
++        await asyncio.wait_for(cleanup_entered.wait(), 5)
++    else:
++        cleanup_release.set()
++    result = {'interrupted': True, 'messages': [], 'final_response': 'interrupted'}
++    drain_entered = asyncio.Event()
++    async def drain():
++        drain_entered.set()
++        if lifecycle == 'exception_cleanup':
++            tracking = asyncio.create_task(asyncio.Event().wait())
++            return await runner._run_agent_cleanup_turn_tasks(
++                ctx, progress_task=None, log_task=None, interrupt_monitor=None,
++                _notify_task=None, tracking_task=tracking, stream_task=None,
++            )
++        return await runner._run_agent_drain_pending(result, adapter, event.source, key)
++    drain_task = asyncio.create_task(drain())
++    repeat = None
++    try:
++        await asyncio.wait_for(drain_entered.wait(), 5)
++        assert not drain_task.done(), 'report drained before stop receipt/source cleanup finished'
++        assert runner._session_state(key).turn.agent is agent
++        if lifecycle == 'handler_cancelled':
++            stop.cancel()
++            await asyncio.gather(stop, return_exceptions=True)
++            assert not drain_task.done()
++        if lifecycle == 'repeat_stop':
++            second = _make_event(text='Stop now.')
++            second.source = event.source
++            repeat = asyncio.create_task(runner._handle_active_session_busy_message(second, key))
++    finally:
++        ack_release.set()
++        cleanup_release.set()
++        await asyncio.wait_for(asyncio.gather(stop, return_exceptions=True), 5)
++    if repeat:
++        await asyncio.wait_for(repeat, 5)
++        agent.interrupt.assert_called_once()
++    drained = await asyncio.wait_for(drain_task, 5)
++    if lifecycle == 'exception_cleanup':
++        assert runner._session_state(key).turn.agent is None
++        return
++    pending_event, pending = drained
++    assert pending_event is event
++    if lifecycle != 'recursive':
++        return
++    # Exercise the actual recursive gateway handoff, with only the model/delivery
++    # boundaries replaced. No manual TurnState.clear() between these turns.
++    successor = _make_event(text='Start a different task')
++    successor.source = event.source
++    successor.message_id = 'successor'
++    adapter._pending_messages[key] = successor
++    runner._prepare_profile_scoped_inbound_message_text = AsyncMock(side_effect=lambda **kw: kw['event'].text)
++    runner._refresh_agent_cache_message_count = AsyncMock()
++    runner._intake_adapter_for = lambda source: None
++    runner._session_key_for_source = lambda source: key
++    runner._run_agent_deliver_first_response = AsyncMock()
++    adapter.send_typing = AsyncMock()
++    observed = []
++    async def run(**kwargs):
++        report = kwargs['request_message'] == event.text
++        child = TurnContext(source=event.source, session_key=key, agent_holder=[agent],
++                            _run_still_current=lambda: True)
++        await runner._run_agent_track_agent(child)
++        future = asyncio.get_running_loop().create_future()
++        observed.append(runner._should_emit_long_running_notification(key, agent, future))
++        future.cancel()
++        answer = {'messages': [], 'final_response': 'stopped' if report else 'new work complete'}
++        if report:
++            next_event, next_text = await runner._run_agent_drain_pending(answer, adapter, event.source, key)
++            return await runner._run_agent_queued_followup(child, adapter, next_text, next_event, answer, answer, None)
++        return answer
++    runner._run_agent = run
++    await runner._run_agent_queued_followup(ctx, adapter, pending, pending_event, result, result, None)
++    assert observed == [False, True]
++    adapter.send_typing.assert_awaited_once()

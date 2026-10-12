@@ -1,0 +1,997 @@
+diff --git a/hermes/plugins/platforms/slack/adapter.py b/hermes/plugins/platforms/slack/adapter.py
+--- a/hermes/plugins/platforms/slack/adapter.py
++++ b/hermes/plugins/platforms/slack/adapter.py
+@@ -52,8 +52,10 @@
+ 
+ try:  # sibling module; support both package and flat plugin-dir import
+     from .block_kit import render_blocks, sanitize_blocks
++    from .message_edits import MessageEdits
+ except ImportError:  # pragma: no cover - plugin loaded outside package context
+     from block_kit import render_blocks, sanitize_blocks  # type: ignore
++    from message_edits import MessageEdits
+ 
+ 
+ logger = logging.getLogger(__name__)
+@@ -1051,8 +1053,9 @@
+         # Dedup cache: prevents duplicate bot responses when Socket Mode reconnects redeliver events
+         # (#4777).
+         self._dedup = MessageDeduplicator(ttl_seconds=_slack_dedup_ttl_seconds())
+-        # ts of messages already routed to the agent, so later edits don't re-trigger a reply.
++        # Claim routed messages so automatic unfurls cannot re-trigger a reply.
+         self._processed_message_ts: Dict[str, float] = {}
++        self._message_edits = MessageEdits()
+         # approval / clarify message_ts (or (team_id, ts)) → resolved; blocks double-clicks.
+         # Bounded: never-clicked prompts would otherwise leak forever.
+         self._approval_resolved: Dict[Any, bool] = {}
+@@ -2248,9 +2251,22 @@
+         blocked = self._outbound_blocked(chat_id, "outbound generic send to")
+         if blocked:
+             return blocked
++        revision = (metadata or {}).get("_slack_reply_revision")
++        obligation = (metadata or {}).get('_delivery_obligation_id')
++        if obligation:
++            revision, obsolete = self._message_edits.for_obligation(obligation, chat_id)
++            if obsolete:
++                return SendResult(success=True)
++            if revision:
++                metadata = dict(metadata or {}, slack_team_id=revision.key[0])
+         chat_id = await self._dm_target(chat_id, metadata)
+         thread_ts = None
+         try:
++            if revision and not (metadata or {}).get("_interim_send"):
++                if not self._message_edits.current(revision):
++                    return SendResult(success=True)
++                if revision.reply.ids:
++                    return await self._message_edits.update_reply(self, revision, content, metadata)
+             team_id = self._metadata_team_id(metadata)
+             slash_ctx = self._pop_slash_context(chat_id, team_id)
+             if slash_ctx:
+@@ -2272,7 +2288,8 @@
+                 # stay stuck on "is thinking..." (#24117).
+                 return SendResult(success=True)
+             thread_ts = self._resolve_thread_ts(reply_to, metadata)
+-            last_result = await self._post_chunks(chat_id, team_id, content, formatted, thread_ts)
++            last_result = await self._post_chunks(
++                chat_id, team_id, content, formatted, thread_ts, revision=revision)
+             # Clear Slack Assistant status as soon as the final message is posted.
+             if thread_ts and not (metadata or {}).get("_interim_send"):
+                 await self.stop_typing(chat_id, metadata=metadata)
+@@ -2301,7 +2318,8 @@
+                 retry_after=self._retry_after_from_exc(e) if _retryable else None)
+ 
+     async def _post_chunks(
+-        self, chat_id: str, team_id: str, content: str, formatted: str, thread_ts: Optional[str]
++        self, chat_id: str, team_id: str, content: str, formatted: str, thread_ts: Optional[str],
++        *, revision=None,
+     ) -> Any:
+         """``chat.postMessage`` each ``MAX_MESSAGE_LENGTH`` chunk; returns the last response.
+         Block Kit only for single-chunk messages (a >39k response is pathological for the 50-block /
+@@ -2324,7 +2342,49 @@
+             client_fn = lambda: self._get_client(chat_id, team_id=team_id)  # noqa: E731
+             last_result = await self._call_with_block_fallback(
+                 client_fn, "chat_postMessage", kwargs, "send")
++            if revision and last_result.get("ts"):
++                revision.reply.ids.append(last_result["ts"])
+         return last_result
++
++    async def send_final_ledgered(self, event, session_key, text_content, metadata, **kwargs):
++        revision = self._message_edits.for_reply(event)
++        if revision:
++            event._slack_revision = revision
++            metadata = dict(metadata or {}, _slack_reply_revision=revision)
++            if self._message_edits.edited(revision):
++                event.ledger_message_id = f"{revision.key[3]}:edit:{revision.version}"
++        result, transport = await super().send_final_ledgered(
++            event, session_key, text_content, metadata, **kwargs)
++        if revision and result.success:
++            await self._message_edits.save(revision)
++        return result, transport
++
++    async def _record_delivery_obligation(self, event, session_key, content, transport, ephemeral):
++        obligation = await super()._record_delivery_obligation(event, session_key, content, transport, ephemeral)
++        revision = self._message_edits.for_reply(event)
++        if obligation and revision:
++            revision.reply.obligations[obligation] = str(revision.version)
++            await self._message_edits.save(revision)
++            if not self._message_edits.current(revision):
++                from gateway.delivery_ledger import supersede_obligation
++                await asyncio.to_thread(supersede_obligation, obligation)
++        return obligation
++
++    async def _finalize_delivery_obligation(self, obligation, result, event, transport):
++        revision = self._message_edits.for_reply(event)
++        if revision and not self._message_edits.current(revision):
++            from gateway.delivery_ledger import supersede_obligation
++            await asyncio.to_thread(supersede_obligation, obligation)
++            return
++        await super()._finalize_delivery_obligation(obligation, result, event, transport)
++
++    async def _process_message_background(self, event, session_key):
++        self._message_edits.processing[session_key] = event
++        try:
++            await super()._process_message_background(event, session_key)
++        finally:
++            if self._message_edits.processing.get(session_key) is event:
++                self._message_edits.processing.pop(session_key, None)
+ 
+     @staticmethod
+     def _retry_after_from_exc(e: BaseException) -> Optional[float]:
+@@ -4155,15 +4215,17 @@
+                 chat_type="dm" if is_dm else "group")
+         return True
+ 
+-    def _normalize_changed_message(self, event: dict) -> Optional[dict]:
++    def _normalize_changed_message(self, event: dict, payload=None) -> Optional[dict]:
+         """Turn a ``message_changed`` envelope into a plain message event.
+-        None if malformed or the original was already routed to the agent. The edit's own ts rides
++        None if malformed, unchanged, or an unfurl of an already routed message. The edit's own ts rides
+         along as ``_slack_changed_event_ts`` for dedup."""
+         updated_message = event.get("message")
+         if not isinstance(updated_message, dict):
+             return None
+         original_message_ts = str(updated_message.get("ts") or "")
+-        if original_message_ts and original_message_ts in self._processed_message_ts:
++        user_edit = self._message_edits.user_edit(self, event, payload)
++        if (not user_edit and original_message_ts
++                and original_message_ts in self._processed_message_ts):
+             return None
+         edited = updated_message.get("edited")
+         edited_ts = str(edited.get("ts") or "") if isinstance(edited, dict) else ""
+@@ -4173,6 +4235,8 @@
+             or (outer_event_ts if outer_event_ts != original_message_ts else "")
+             or (f"{original_message_ts}:changed" if original_message_ts else ""))
+         normalized_event = dict(updated_message)
++        if user_edit:
++            normalized_event["_slack_user_edit"] = True
+         for key in ("channel", "channel_type", "team", "team_id"):
+             if not normalized_event.get(key) and event.get(key):
+                 normalized_event[key] = event.get(key)
+@@ -4361,13 +4425,17 @@
+         """Guard around :meth:`_handle_slack_message_impl`: the impl claims the ts early (no second
+         turn from a mid-flight unfurl); if THIS call newly claimed it and raises, release the claim
+         so a retry/edit can re-drive it. Pre-existing claims stay."""
+-        _ts = str((event or {}).get("ts") or "")
++        raw = self._message_edits.envelope_raw(event)
++        revision_key = self._message_edits.key(self, raw, payload)
++        previous_revision = self._message_edits.lookup(revision_key)
++        _ts = str(raw.get("ts") or "")
+         # getattr: bare test doubles (object.__new__) may lack the map.
+         _claims = getattr(self, "_processed_message_ts", None)
+         _was_claimed = bool(_ts) and _claims is not None and _ts in _claims
+         try:
+             return await self._handle_slack_message_impl(event, payload)
+         except BaseException:
++            self._message_edits.release_failed(revision_key, raw, previous_revision)
+             _claims = getattr(self, "_processed_message_ts", None)
+             if _ts and not _was_claimed and _claims is not None and _ts in _claims:
+                 _claims.pop(_ts, None)
+@@ -4421,7 +4489,7 @@
+                 (_bot_profile.get("name") if isinstance(_bot_profile, dict) else "") or "",
+                 event.get("channel", ""), event.get("ts", ""), event.get("thread_ts", ""))
+         if event.get("subtype") == "message_changed":
+-            event = self._normalize_changed_message(event)
++            event = self._normalize_changed_message(event, payload)
+             if event is None:
+                 return None
+         # Socket Mode redelivers after reconnects. Scope by workspace: ts is only unique per team.
+@@ -4576,7 +4644,9 @@
+         is_thread_reply = bool(event_thread_ts and event_thread_ts != ts)
+         # Internal triggers (reactions) skip the mention requirement but NOT
+         # allowed_channels or user authorization.
+-        force_process = bool(event.get("_hermes_force_process"))
++        force_process = bool(event.get("_hermes_force_process")) or bool(
++            event.get("_slack_user_edit")
++            and self._message_edits.lookup(self._message_edits.key(self, event, payload)))
+         if await self._peer_bot_drop(event, user_id, bot_uid, channel_id, team_id, is_mentioned):
+             return
+         if (
+@@ -4594,7 +4664,11 @@
+         # A changed event can pass normalization while the original is awaiting
+         # admission/channel checks. Recheck after those awaits, then claim with
+         # no intervening await so an unfurl cannot become a second user turn.
+-        if event.get("_slack_changed_event_ts") and _claim_ts in self._processed_message_ts:
++        if (event.get("_slack_changed_event_ts") and not event.get("_slack_user_edit")
++                and _claim_ts in self._processed_message_ts):
++            return
++        revision = self._message_edits.claim(self, event, payload)
++        if revision is None:
+             return
+         if _claim_ts:
+             self._remember_processed_message_ts(_claim_ts)
+@@ -4617,6 +4691,8 @@
+             is_command_text=is_command_text, channel_id=channel_id, team_id=team_id, ts=ts,
+             user_id=user_id, thread_ts=thread_ts, is_dm=is_dm, media_urls=media_urls,
+             media_types=media_types, media_text_inlined=media_text_inlined, channel_context=channel_context)
++        if not self._message_edits.current(revision):
++            return
+         # React only when directly addressed; MPIMs are shared, so they need a
+         # mention like any channel.
+         ack_enabled = self._acknowledgement_reactions_enabled()
+@@ -4634,7 +4710,8 @@
+                 f"{msg_event.text}")
+         if ts:
+             self._remember_processed_message_ts(ts)
+-        await self.handle_message(msg_event)
++        await self._message_edits.dispatch(
++            self, msg_event, revision, edited=bool(event.get("_slack_user_edit")))
+ 
+     async def _build_message_event(
+         self, event: dict, *, text: str, original_text: str, command_probe_text: str,
+diff --git a/hermes/plugins/platforms/slack/message_edits.py b/hermes/plugins/platforms/slack/message_edits.py
+new file mode 100644
+--- /dev/null
++++ b/hermes/plugins/platforms/slack/message_edits.py
+@@ -0,0 +1,289 @@
++"""Version Slack requests without treating unfurls as new user instructions."""
++
++import asyncio
++import hashlib
++import json
++import logging
++import sqlite3
++from dataclasses import dataclass, field
++from decimal import Decimal, InvalidOperation
++
++from hermes_constants import get_hermes_home
++
++logger = logging.getLogger(__name__)
++
++
++def fingerprint(text):
++    return hashlib.sha256(str(text or "").encode()).hexdigest()
++
++
++def version(raw):
++    edited = raw.get("edited") or {}
++    try:
++        value = Decimal(str(edited.get("ts") or raw.get("ts") or "0"))
++        return value if value.is_finite() else Decimal(0)
++    except (InvalidOperation, ValueError):
++        return Decimal(0)
++
++
++@dataclass
++class Reply:
++    ids: list = field(default_factory=list)
++    obligations: dict = field(default_factory=dict)
++    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
++
++
++@dataclass
++class Revision:
++    key: tuple
++    version: Decimal
++    digest: str
++    reply: Reply = field(default_factory=Reply)
++    event: object = None
++
++
++class MessageEdits:
++    def __init__(self):
++        self.path = get_hermes_home() / "slack-message-edits.sqlite"
++        self.records = {}
++        self.processing = {}
++        self.locks = {}
++
++    def key(self, adapter, raw, payload=None):
++        return (adapter._event_team_id(raw, payload), str(raw.get("channel") or ""),
++                str(raw.get("user") or ""), str(raw.get("ts") or ""))
++
++    def lookup(self, key):
++        if key in self.records:
++            return self.records[key]
++        if self.path.exists():
++            with sqlite3.connect(self.path) as db:
++                row = db.execute("SELECT version,digest,replies FROM message_versions WHERE identity=?",
++                                 (json.dumps(key),)).fetchone()
++            if row:
++                saved = json.loads(row[2])
++                reply = Reply(saved) if isinstance(saved, list) else Reply(saved['ids'], saved['obligations'])
++                self.records[key] = Revision(key, Decimal(row[0]), row[1], reply)
++                return self.records[key]
++
++    def user_edit(self, adapter, envelope, payload=None):
++        raw = dict(envelope.get("message") or {})
++        for name in ("channel", "team", "team_id"):
++            raw.setdefault(name, envelope.get(name))
++        edited = raw.get("edited")
++        if (not isinstance(edited, dict) or not raw.get("user")
++                or edited.get("user") != raw.get("user") or not edited.get("ts")):
++            return False
++        known = self.lookup(self.key(adapter, raw, payload))
++        if known:
++            incoming = version(raw)
++            if incoming <= known.version:
++                return False
++            if fingerprint(raw.get("text")) == known.digest:
++                old_version = str(known.version)
++                known.version = incoming
++                for obligation, stored_version in known.reply.obligations.items():
++                    if stored_version == old_version:
++                        known.reply.obligations[obligation] = str(incoming)
++                if self.path.exists():
++                    with sqlite3.connect(self.path) as db:
++                        db.execute("UPDATE message_versions SET version=?,replies=? WHERE identity=?",
++                                   (str(incoming), json.dumps({'ids':known.reply.ids,
++                                    'obligations':known.reply.obligations}), json.dumps(known.key)))
++                return False
++            return True
++        previous = envelope.get("previous_message")
++        if isinstance(previous, dict):
++            return (previous.get("user") == raw.get("user") and previous.get("ts") == raw.get("ts")
++                    and fingerprint(previous.get("text")) != fingerprint(raw.get("text")))
++        return True  # e.g. a mention added to an ignored message
++
++    def claim(self, adapter, raw, payload=None):
++        key = self.key(adapter, raw, payload)
++        previous = self.lookup(key)
++        incoming = version(raw)
++        if previous and incoming <= previous.version:
++            return None
++        record = Revision(key, incoming, fingerprint(raw.get("text")),
++                          previous.reply if previous else Reply())
++        self.records[key] = record
++        # Disk retains completed mappings; bound the process-local intake cache.
++        if len(self.records) > 4000:
++            oldest = next(iter(self.records))
++            if oldest != key:
++                self.records.pop(oldest)
++        return record
++
++    def current(self, record):
++        return self.records.get(record.key) is record
++
++    def for_reply(self, event):
++        inbound = str(event.ledger_message_id or event.message_id or "")
++        bound = getattr(event, "_slack_revision", None)
++        if bound and (inbound == bound.key[3] or inbound.startswith(bound.key[3] + ":edit:")):
++            return bound
++        if not inbound:
++            return None
++        source = event.source
++        record = self.lookup((source.scope_id or "", source.chat_id, source.user_id or "", inbound))
++        if record:
++            return record
++        # Native queued finals carry the terminal inbound ID on the opening event. Slack message
++        # IDs are unique within a channel; a validated queued sender can differ from the opener.
++        matches = [r for r in self.records.values()
++                   if r.key[:2] == (source.scope_id or "", source.chat_id) and r.key[3] == inbound]
++        return matches[0] if len(matches) == 1 else None
++
++    def edited(self, record):
++        return record.version > version({"ts": record.key[3]})
++
++    def for_obligation(self, obligation, chat_id):
++        records = list(self.records.values())
++        if self.path.exists():
++            with sqlite3.connect(self.path) as db:
++                keys = [json.loads(row[0]) for row in db.execute('SELECT identity FROM message_versions')]
++            records.extend(self.lookup(tuple(key)) for key in keys if key[1] == chat_id)
++        for record in records:
++            if record and record.key[1] == chat_id and obligation in record.reply.obligations:
++                obsolete = record.reply.obligations[obligation] != str(record.version)
++                return record, obsolete
++        return None, False
++
++    def envelope_raw(self, envelope):
++        raw = dict(envelope.get("message") or {}) if envelope.get("subtype") == "message_changed" else dict(envelope)
++        for name in ("channel", "team", "team_id"):
++            if not raw.get(name):
++                raw[name] = envelope.get(name)
++        return raw
++
++    def release_failed(self, key, raw, previous):
++        current = self.records.get(key)
++        if current is not previous and current and current.version == version(raw):
++            if previous is None:
++                self.records.pop(key, None)
++            else:
++                self.records[key] = previous
++
++    @staticmethod
++    def same_message(left, right):
++        if left is None or right is None:
++            return False
++        return (str(left.message_id or "") == str(right.message_id or "")
++                and all(getattr(left.source, name, None) == getattr(right.source, name, None)
++                        for name in ("scope_id", "chat_id", "user_id")))
++
++    async def dispatch(self, adapter, event, record, *, edited):
++        if not self.current(record) or adapter._drop_unresolved(event):
++            return
++        runner = adapter.gateway_runner
++        if runner and not runner._is_user_authorized_for_source(event.source):
++            return
++        key = adapter._event_session_key(event)
++        lock = self.locks.setdefault(key, asyncio.Lock())
++        async with lock:
++            if not self.current(record):
++                return
++            record.event = event
++            event._slack_revision = record
++            if not edited:
++                await adapter.handle_message(event)
++                return
++            edit_context = ('This Slack message was edited. The following request replaces its '
++                            'previous wording. Work only on the updated request.')
++            event.channel_context = '\n\n'.join(part for part in (event.channel_context, edit_context) if part)
++            from gateway.delivery_ledger import supersede_obligation
++            for obligation in tuple(record.reply.obligations):
++                await asyncio.to_thread(supersede_obligation, obligation)
++            # A pending edit updates its place in the queue; another active request keeps running.
++            state = runner._peek_session_state(key) if runner else None
++            pending = adapter._pending_messages.get(key)
++            if self.same_message(pending, event):
++                adapter._pending_messages[key] = event
++                event._gateway_accepted = True
++                return
++            overflow = state.conversation.queued_events if state else []
++            for index, queued in enumerate(overflow):
++                if self.same_message(queued, event):
++                    overflow[index] = event
++                    event._gateway_accepted = True
++                    return
++            active = self.processing.get(key)
++            if state and state.turn.ctx:
++                ctx = state.turn.ctx
++                active = type(event)(text="", source=ctx.source, message_id=ctx.inbound_message_id)
++            elif state and state.turn.event:
++                active = state.turn.event
++            if self.same_message(active, event):
++                generation = None
++                if runner:
++                    generation = runner._interrupt_running_turn(
++                        key, interrupt_reason="Slack message edited", invalidation_reason="message_edited")
++                guard = adapter._active_sessions.get(key)
++                if guard:
++                    guard.set()
++                task = adapter._session_tasks.get(key)
++                # Own the lane while the old finally unwinds. Its queued follow-ups stay parked.
++                adapter._session_tasks[key] = asyncio.current_task()
++                if task is not None and not task.done():
++                    adapter._expected_cancelled_tasks.add(task)
++                    task.cancel()
++                    try:
++                        await asyncio.wait_for(asyncio.shield(task), 5)
++                    except asyncio.CancelledError:
++                        if asyncio.current_task().cancelling():
++                            raise
++                    except asyncio.TimeoutError:
++                        logger.warning("Edited Slack turn is still unwinding: %s", key)
++                if runner:
++                    runner._drop_turn_slot(key, run_generation=generation)
++                adapter._release_session_guard(key)
++                if adapter._session_tasks.get(key) is asyncio.current_task():
++                    adapter._session_tasks.pop(key, None)
++            policy = getattr(adapter, "_workspace_membership", None)
++            service = getattr(policy, "vault_service", None)
++            if service:
++                await service.channel_control.stop_message(event.source, event.message_id)
++            if self.current(record):
++                await adapter.handle_message(event)
++
++    async def save(self, record):
++        # A send that was already accepted by Slack may complete after an edit arrived.
++        # The shared reply IDs still belong to the latest version of that same request.
++        latest = self.records.get(record.key, record)
++        values = (json.dumps(record.key), str(latest.version), latest.digest, json.dumps({
++            'ids':record.reply.ids, 'obligations':record.reply.obligations}))
++        def write():
++            self.path.parent.mkdir(parents=True, exist_ok=True)
++            with sqlite3.connect(self.path) as db:
++                db.execute("CREATE TABLE IF NOT EXISTS message_versions "
++                           "(identity TEXT PRIMARY KEY,version TEXT,digest TEXT,replies TEXT)")
++                db.execute("INSERT INTO message_versions VALUES (?,?,?,?) ON CONFLICT(identity) "
++                           "DO UPDATE SET version=excluded.version,digest=excluded.digest,replies=excluded.replies "
++                           "WHERE CAST(excluded.version AS REAL)>=CAST(message_versions.version AS REAL)", values)
++        await asyncio.to_thread(write)
++
++    async def update_reply(self, adapter, record, content, metadata):
++        from gateway.platforms.base import SendResult
++        async with record.reply.lock:
++            if not self.current(record):
++                return SendResult(success=True)
++            chunks = adapter.truncate_message(adapter.format_message(content), adapter.MAX_MESSAGE_LENGTH)
++            client = adapter._client_for(record.key[1], metadata)
++            for index, chunk in enumerate(chunks):
++                if not self.current(record):
++                    return SendResult(success=True)
++                args = {"channel": record.key[1], "text": chunk, "blocks": []}
++                if index < len(record.reply.ids):
++                    args["ts"] = record.reply.ids[index]
++                    await client.chat_update(**args)
++                else:
++                    args.pop("blocks")
++                    args["thread_ts"] = adapter._resolve_thread_ts(record.key[3], metadata)
++                    response = await client.chat_postMessage(**args)
++                    record.reply.ids.append(response["ts"])
++            while len(record.reply.ids) > len(chunks):
++                await client.chat_delete(channel=record.key[1], ts=record.reply.ids[-1])
++                record.reply.ids.pop()
++            await self.save(record)
++            await adapter._clear_thread_status_quietly(record.key[1], metadata)
++            return SendResult(success=True, message_id=record.reply.ids[-1] if record.reply.ids else None)
+diff --git a/hermes/gateway/delivery_ledger.py b/hermes/gateway/delivery_ledger.py
+--- a/hermes/gateway/delivery_ledger.py
++++ b/hermes/gateway/delivery_ledger.py
+@@ -313,6 +313,11 @@
+ 
+ def mark_delivered(obligation_id: str) -> None:
+     _update_state(obligation_id, "delivered")
++
++
++def supersede_obligation(obligation_id: str) -> None:
++    """Withdraw an obsolete reply so boot and runtime recovery cannot replay it."""
++    _update_state(obligation_id, "superseded")
+ 
+ 
+ def mark_failed(obligation_id: str, error: str = "") -> None:
+diff --git a/hermes/gateway/run_startup.py b/hermes/gateway/run_startup.py
+--- a/hermes/gateway/run_startup.py
++++ b/hermes/gateway/run_startup.py
+@@ -442,7 +442,9 @@
+             content = row["content"]
+             if row.get("needs_marker"):
+                 content = row.get("marker", RECOVERED_MARKER) + content
+-            metadata = {"thread_id": row["thread_id"]} if row.get("thread_id") else None
++            metadata = {"_delivery_obligation_id": row["obligation_id"]}
++            if row.get("thread_id"):
++                metadata["thread_id"] = row["thread_id"]
+             try:
+                 result = await adapter.send(chat_id=row["chat_id"], content=content, metadata=metadata)
+             except Exception as send_err:
+diff --git a/hermes/tests/gateway/test_delivery_ledger.py b/hermes/tests/gateway/test_delivery_ledger.py
+--- a/hermes/tests/gateway/test_delivery_ledger.py
++++ b/hermes/tests/gateway/test_delivery_ledger.py
+@@ -413,8 +413,9 @@
+ 
+     @pytest.mark.asyncio
+     async def test_pending_redelivers_plain_and_clears_resume(self):
+-        _record()  # pending
+-        _orphan("ob-1")
++        obligation_id = "ob-1"
++        _record(oid=obligation_id)  # pending
++        _orphan(obligation_id)
+         adapter = self._adapter()
+         runner = self._runner(adapter)
+ 
+@@ -423,8 +424,9 @@
+         assert n == 1
+         sent = adapter.send.call_args.kwargs
+         assert sent["content"] == "the final answer"  # no marker
+-        assert sent["metadata"] == {"thread_id": "171.001"}
+-        assert _row("ob-1")["state"] == "delivered"
++        assert sent["metadata"]["thread_id"] == "171.001"
++        assert sent["metadata"]["_delivery_obligation_id"] == obligation_id
++        assert _row(obligation_id)["state"] == "delivered"
+         runner._async_session_store.clear_resume_pending.assert_awaited_once_with(
+             "agent:main:slack:channel:C1"
+         )
+diff --git a/hermes/tests/gateway/test_slack_message_edits.py b/hermes/tests/gateway/test_slack_message_edits.py
+new file mode 100644
+--- /dev/null
++++ b/hermes/tests/gateway/test_slack_message_edits.py
+@@ -0,0 +1,239 @@
++"""Slack edits cancel obsolete work and retain one reply across completed revisions."""
++
++import asyncio
++import sqlite3
++from contextlib import nullcontext
++from types import SimpleNamespace
++from unittest.mock import AsyncMock
++
++import pytest
++import pytest_asyncio
++from aiohttp import web
++from slack_sdk.web.async_client import AsyncWebClient
++
++from gateway.config import GatewayConfig, PlatformConfig
++from gateway.run import GatewayRunner
++from gateway import delivery_ledger
++from gateway.platforms.event import MessageEvent
++from gateway.session import SessionSource
++from plugins.platforms.slack.adapter import SlackAdapter
++
++
++def message(text, ts="100.001"):
++    return {"type": "message", "user": "U1", "channel": "D1", "channel_type": "im",
++            "team": "T1", "ts": ts, "thread_ts": "100.001", "text": text,
++            "client_msg_id": "human-" + ts}
++
++
++def edit(text, edited_ts, ts="100.001"):
++    raw = message(text, ts)
++    raw["edited"] = {"user": "U1", "ts": edited_ts}
++    return {"type": "message", "subtype": "message_changed", "channel": "D1",
++            "channel_type": "im", "team": "T1", "ts": edited_ts, "event_ts": edited_ts,
++            "message": raw}
++
++
++@pytest_asyncio.fixture
++async def harness(monkeypatch):
++    requests, replies, runs, stopped = [], {}, [], []
++    gates = {}
++    entered = asyncio.Queue()
++    cancelling, release_cancel = asyncio.Event(), asyncio.Event()
++
++    async def receive(request):
++        body = await request.json() if request.content_type == "application/json" else dict(await request.post())
++        body = {**dict(request.query), **body}
++        method = request.match_info["method"]
++        requests.append((method, body))
++        if method == "chat.postMessage":
++            ts = f"200.{len(requests):06d}"
++            replies[ts] = body["text"]
++        else:
++            ts = body.get("ts", "0")
++            if method == "chat.update":
++                assert ts in replies
++                replies[ts] = body["text"]
++            elif method == "chat.delete":
++                replies.pop(ts)
++        return web.json_response({"ok": True, "ts": ts})
++
++    app = web.Application()
++    app.router.add_post("/api/{method}", receive)
++    server = web.AppRunner(app)
++    await server.setup()
++    await web.TCPSite(server, "127.0.0.1", 0).start()
++    url = f"http://127.0.0.1:{server.addresses[0][1]}/api/"
++    adapters = []
++
++    def make_adapter():
++        adapter = SlackAdapter(PlatformConfig(enabled=True, token="xoxb-dummy", typing_indicator=False,
++                                              extra={"reactions": False}))
++        adapter._bot_user_id = "U_BOT"
++        adapter._app = SimpleNamespace(client=AsyncWebClient(token="xoxb-dummy", base_url=url,
++                                                            timeout=5, retry_handlers=[]))
++        adapter._resolve_user_name = AsyncMock(return_value="Member")
++        adapter._resolve_channel_name = AsyncMock(return_value="DM")
++        adapter._hydrate_thread_context = AsyncMock(return_value=(None, [], []))
++        adapter._set_assistant_thread_title = AsyncMock()
++        adapter._clear_thread_status_quietly = AsyncMock()
++        adapter._early_reject_unauthorized = lambda *_args: False
++        adapter._media_delivery_scope = lambda *_args: nullcontext()
++        native = object.__new__(GatewayRunner)
++        native.config = GatewayConfig()
++        native._sessions = {}
++        native._persist_active_agents = lambda: None
++        native._delivery_adapter_for = lambda source: adapter
++        native._is_user_authorized_for_source = lambda source: source.user_id == "U1"
++        native._profile_name_for_source = lambda source, **kwargs: None
++        native._evict_cached_agent = lambda key: None
++        adapter.gateway_runner = native
++
++        async def run(event):
++            key = adapter._event_session_key(event)
++            generation = native._begin_session_run_generation(key)
++            state = native._session_state(key)
++            state.turn.event = event
++            state.turn.agent = SimpleNamespace(hard_interrupt=stopped.append, session_id="fixture")
++            state.turn.ctx = SimpleNamespace(source=event.source, inbound_message_id=event.message_id)
++            runs.append(event.text)
++            await entered.put(event.text)
++            try:
++                if event.text in gates:
++                    await gates[event.text].wait()
++                return event.text if native._is_session_run_current(key, generation) else None
++            except asyncio.CancelledError:
++                if event.text == "old":
++                    cancelling.set()
++                    await release_cancel.wait()
++                raise
++            finally:
++                native._release_running_agent_state(key, run_generation=generation)
++
++        adapter.set_message_handler(run)
++        adapters.append(adapter)
++        return adapter
++
++    async def idle(adapter):
++        while adapter._background_tasks:
++            await asyncio.gather(*tuple(adapter._background_tasks), return_exceptions=True)
++
++    try:
++        yield SimpleNamespace(make=make_adapter, runs=runs, replies=replies, requests=requests,
++                              stopped=stopped, gates=gates, entered=entered, cancelling=cancelling,
++                              release_cancel=release_cancel, idle=idle)
++    finally:
++        release_cancel.set()
++        for adapter in adapters:
++            await adapter.cancel_background_tasks()
++        await server.cleanup()
++
++
++@pytest.mark.asyncio
++async def test_only_latest_active_revision_runs_and_other_queued_messages_survive(harness):
++    h = harness
++    adapter = h.make()
++    latest_claimed = asyncio.Event()
++    claim = adapter._message_edits.claim
++    def observe_claim(a, raw, payload=None):
++        result = claim(a, raw, payload)
++        if raw.get("text") == "latest":
++            latest_claimed.set()
++        return result
++    adapter._message_edits.claim = observe_claim
++    h.gates["old"] = asyncio.Event()
++    await adapter._handle_slack_message(message("old"))
++    assert await asyncio.wait_for(h.entered.get(), 5) == "old"
++    await adapter._handle_slack_message(message("unrelated", "100.002"))
++    await adapter._handle_slack_message(edit("unrelated edited", "100.005", "100.002"))
++    assert h.stopped == []
++    first_edit = asyncio.create_task(adapter._handle_slack_message(edit("intermediate", "101.001")))
++    await asyncio.wait_for(h.cancelling.wait(), 5)
++    latest_edit = asyncio.create_task(adapter._handle_slack_message(edit("latest", "102.001")))
++    # Wait for the newer version's intake claim while cancellation is held open.
++    await asyncio.wait_for(latest_claimed.wait(), 5)
++    h.release_cancel.set()
++    await asyncio.wait_for(asyncio.gather(first_edit, latest_edit), 5)
++    await asyncio.wait_for(h.idle(adapter), 5)
++    assert h.stopped == ["Slack message edited"]
++    assert h.runs == ["old", "latest", "unrelated edited"]
++    assert sorted(h.replies.values()) == ["latest", "unrelated edited"]
++    await adapter._handle_slack_message(edit("stale", "101.002"))
++    await adapter._handle_slack_message(edit("latest", "102.001"))
++    await asyncio.wait_for(h.idle(adapter), 5)
++    assert h.runs == ["old", "latest", "unrelated edited"]
++    # An edit can also overtake the original while its sender enrichment is still awaiting I/O.
++    enriching, release_enrichment = asyncio.Event(), asyncio.Event()
++    first_lookup = True
++    async def enrich(*args, **kwargs):
++        nonlocal first_lookup
++        if first_lookup:
++            first_lookup = False
++            enriching.set()
++            await release_enrichment.wait()
++        return "Member"
++    adapter._resolve_user_name = enrich
++    intake = asyncio.create_task(adapter._handle_slack_message(message("pending intake", "110.001")))
++    await asyncio.wait_for(enriching.wait(), 5)
++    await adapter._handle_slack_message(edit("edited during intake", "111.001", "110.001"))
++    release_enrichment.set()
++    await asyncio.wait_for(intake, 5)
++    await asyncio.wait_for(h.idle(adapter), 5)
++    assert h.runs[-1] == "edited during intake" and "pending intake" not in h.runs
++
++
++@pytest.mark.asyncio
++async def test_completed_revision_updates_existing_reply_and_mapping_survives_restart(harness):
++    h = harness
++    adapter = h.make()
++    adapter.MAX_MESSAGE_LENGTH = 30
++    await adapter._handle_slack_message(message("original answer " * 7))
++    await asyncio.wait_for(h.idle(adapter), 5)
++    original_ids = list(h.replies)
++    original_revision = adapter._message_edits.lookup(("T1", "D1", "U1", "100.001"))
++    original_obligation = next(iter(original_revision.reply.obligations))
++    delivery_ledger.mark_failed(original_obligation, "fixture delivery failure")
++    assert len(original_ids) > 1
++    await adapter._handle_slack_message(edit("corrected", "101.001"))
++    await asyncio.wait_for(h.idle(adapter), 5)
++    assert h.replies == {original_ids[0]: "corrected"}
++    assert len([method for method, body in h.requests if method == "chat.postMessage"]) == len(original_ids)
++    with sqlite3.connect(delivery_ledger._db_path()) as db:
++        assert db.execute('SELECT state FROM delivery_obligations WHERE obligation_id=?',
++                          (original_obligation,)).fetchone()[0] == 'superseded'
++    # A recovery already claimed before the edit must also suppress its obsolete text.
++    native = adapter.gateway_runner
++    native._obligation_adapter = AsyncMock(return_value=adapter)
++    native._arm_flood_timers_for_waiting_rows = AsyncMock()
++    await native._redeliver_claimed_obligations([{
++        'obligation_id':original_obligation,'chat_id':'D1','thread_id':'100.001',
++        'content':'obsolete recovered answer','platform':'slack','needs_marker':False}])
++    assert h.replies == {original_ids[0]: "corrected"}
++    # A metadata/unfurl change retaining the edit timestamp must not re-run.
++    unfurl = edit("corrected", "101.001")
++    unfurl["event_ts"] = "101.002"
++    unfurl["message"]["attachments"] = [{"title": "preview"}]
++    await adapter._handle_slack_message(unfurl)
++    await adapter._handle_slack_message(edit("corrected", "101.004"))
++    await adapter._handle_slack_message(edit("stale content", "101.003"))
++    await asyncio.wait_for(h.idle(adapter), 5)
++    # The native recursive queue uses a synthetic final event carrying its raw inbound ID.
++    synthetic = MessageEvent(text="", ledger_message_id="100.001", source=SessionSource(
++        adapter.platform, "D1", user_id="U1", scope_id="T1", thread_id="100.001"))
++    result, _ = await adapter.send_final_ledgered(synthetic, "fixture", "queued final",
++        {"slack_team_id": "T1", "thread_id": "100.001"}, reply_to="100.001")
++    assert result.success and h.replies == {original_ids[0]: "queued final"}
++    restarted = h.make()
++    await restarted._handle_slack_message(edit("after restart", "102.001"))
++    await asyncio.wait_for(h.idle(restarted), 5)
++    assert h.runs == ["original answer " * 7, "corrected", "after restart"]
++    assert h.replies == {original_ids[0]: "after restart"}
++    revision = restarted._message_edits.lookup(("T1", "D1", "U1", "100.001"))
++    current_obligation = next(key for key, value in revision.reply.obligations.items()
++                              if value == str(revision.version))
++    native = restarted.gateway_runner
++    native._obligation_adapter = AsyncMock(return_value=restarted)
++    native._arm_flood_timers_for_waiting_rows = AsyncMock()
++    await native._redeliver_claimed_obligations([{
++        'obligation_id':current_obligation,'chat_id':'D1','thread_id':'100.001',
++        'content':'recovered latest answer','platform':'slack','needs_marker':False}])
++    assert h.replies == {original_ids[0]: "recovered latest answer"}
+diff --git a/hermes/tests/gateway/test_slack_unfurl_duplicate_turn.py b/hermes/tests/gateway/test_slack_unfurl_duplicate_turn.py
+--- a/hermes/tests/gateway/test_slack_unfurl_duplicate_turn.py
++++ b/hermes/tests/gateway/test_slack_unfurl_duplicate_turn.py
+@@ -231,12 +231,8 @@
+         asyncio.run(scenario())
+         assert len(delivered) == 2
+ 
+-    def test_a_genuine_user_edit_is_still_suppressed(self):
+-        """A real edit of an already-answered message must not re-trigger.
+-
+-        Same contract as before the fix — re-answering an edited message the
+-        bot already replied to was never wanted.
+-        """
++    def test_a_genuine_user_edit_replaces_the_request(self):
++        """Human text edits re-run the request; attachment-only unfurls do not."""
+         delivered = []
+         adapter = _make_adapter(delivered)
+         adapter._resolve_user_name = AsyncMock(return_value="richard")
+@@ -250,7 +246,8 @@
+             await adapter._handle_slack_message(edit, _body())
+ 
+         asyncio.run(scenario())
+-        assert len(delivered) == 1
++        assert len(delivered) == 2
++        assert delivered[-1].text.startswith("edited text")
+ 
+ 
+ class TestClaimHelperBounded:
+diff --git a/runtime/vault/store.py b/runtime/vault/store.py
+--- a/runtime/vault/store.py
++++ b/runtime/vault/store.py
+@@ -359,12 +359,14 @@
+             return [dict(row) for row in db.execute(
+                 "SELECT * FROM transfers WHERE reply_mode='channel' AND task_state='result_pending'")]
+ 
+-    def channel_tasks_for_control(self, team, owner, source=None):
++    def channel_tasks_for_control(self, team, owner, source=None, message_id=None):
+         with self.connection() as db:
+             rows = [dict(row) for row in db.execute(
+                 "SELECT * FROM transfers WHERE team=? AND owner=? AND reply_mode='channel'",(team,owner))]
+         if source is None:return rows
+         def matches(row):
++            if message_id and json.loads(row['original_source']).get('message_id') != message_id:
++                return False
+             candidates = [json.loads(row['original_source'])]
+             if row['source']:candidates.append(json.loads(row['source']))
+             return any(item['chat_id']==source['chat_id'] and (not source.get('thread_id') or
+@@ -406,7 +408,7 @@
+             db.execute('UPDATE requests SET payment_payload=NULL WHERE team=? AND owner=?',(team,owner))
+             db.execute("UPDATE transfers SET task_state='cancelled',result_payload=NULL WHERE team=? AND owner=? AND task_state IN ('active','result_pending')",(team,owner))
+ 
+-    def cancel(self, *, team, owner, source):
++    def cancel(self, *, team, owner, source, message_id=None):
+         count=0
+         with self.connection() as db:
+             for table in ('requests','transfers'):
+@@ -418,7 +420,9 @@
+                     elif candidates and (task := self.channel_task(candidates[0])) is not None:
+                         candidates.append(json.loads(task['original_source']))
+                     if any(item.get('chat_id')==source['chat_id'] and
+-                           (not source.get('thread_id') or item.get('thread_id')==source['thread_id']) for item in candidates):
++                           (not source.get('thread_id') or item.get('thread_id')==source['thread_id']) and
++                           (not message_id or item.get('message_id')==message_id or
++                            (table=='requests' and row['gateway_event_id']==message_id)) for item in candidates):
+                         db.execute(f"UPDATE {table} SET status='cancelled' WHERE id=?",(row['id'],));count+=1
+                         if table=='requests':db.execute('UPDATE requests SET code_payload=NULL,payment_payload=NULL WHERE id=?',(row['id'],))
+                         else:db.execute("UPDATE transfers SET task_state='cancelled',result_payload=NULL WHERE id=?",(row['id'],))
+diff --git a/runtime/vault/channel_control.py b/runtime/vault/channel_control.py
+--- a/runtime/vault/channel_control.py
++++ b/runtime/vault/channel_control.py
+@@ -211,6 +211,19 @@
+                 pending = True
+         return pending
+ 
++    async def stop_message(self, source, message_id):
++        """An edit revokes only the work and access forms linked to that inbound message."""
++        service = self.service
++        if not service.policy.authorize_source(source):
++            raise AccessError('The edited task is no longer authorized.', 403)
++        rows = [row for row in service.store.channel_tasks_for_control(
++            source.scope_id, source.user_id, source.to_dict(), message_id=message_id)
++            if row['task_state'] in ('active', 'result_pending')]
++        service.store.cancel(team=source.scope_id, owner=source.user_id,
++                             source=source.to_dict(), message_id=message_id)
++        if await self.stop_sources(rows):
++            raise AccessError('The previous task is still stopping. Retry the edit shortly.', 409)
++
+     async def stop_owner(self, team, owner):
+         rows = self.service.store.channel_tasks_for_control(team, owner)
+         return await self.stop_sources(rows)
+diff --git a/runtime/vault/channel_tasks.py b/runtime/vault/channel_tasks.py
+--- a/runtime/vault/channel_tasks.py
++++ b/runtime/vault/channel_tasks.py
+@@ -91,6 +91,14 @@
+             if row is None:
+                 return
+             original = await self.validate_destination(row)
++            edits = getattr(self.service.policy.adapter, '_message_edits', None)
++            revision = edits.lookup((original.scope_id, original.chat_id, original.user_id,
++                                     original.message_id)) if edits and original.message_id else None
++            request_version = json.loads(row['original_source']).get('slack_request_version')
++            request_digest = json.loads(row['original_source']).get('slack_request_digest')
++            if (revision and request_version and str(revision.version) != request_version
++                    and revision.digest != request_digest):
++                return  # an edit was admitted while this result was waiting for publication
+             client = self.service.policy.client()
+             client_id = str(uuid5(NAMESPACE_URL,'clanker-channel-result:' + task_id))
+             # Recover a Slack ACK lost before the SQLite completion commit.
+@@ -119,8 +127,20 @@
+                     access = self.service.delegations.lookup(row['team'],row['owner'],item['id'])
+                     text = scrub_secret_from_text(text,access.secret())
+                 text = redact_registered_vault_values(redact_sensitive_text(text,force=True))
+-                posted = await client.chat_postMessage(channel=original.chat_id,thread_ts=original.thread_id,
+-                    text=text,client_msg_id=client_id,unfurl_links=False,unfurl_media=False)
++                if revision and not edits.current(revision):
++                    return
++                if revision and revision.reply.ids:
++                    result = await edits.update_reply(self.service.policy.adapter, revision, text,
++                        {'slack_team_id':original.scope_id,'thread_id':original.thread_id})
++                    if not result.success:
++                        raise AccessError('The updated channel result remains pending.', 409)
++                    posted = {'ts':result.message_id}
++                else:
++                    posted = await client.chat_postMessage(channel=original.chat_id,thread_ts=original.thread_id,
++                        text=text,client_msg_id=client_id,unfurl_links=False,unfurl_media=False)
++                    if revision:
++                        revision.reply.ids.append(posted['ts'])
++                        await edits.save(revision)
+             self.store.mark_channel_result(task_id,posted['ts'])
+ 
+     def recover_response(self, row, event_id):
+diff --git a/runtime/vault/service.py b/runtime/vault/service.py
+--- a/runtime/vault/service.py
++++ b/runtime/vault/service.py
+@@ -214,6 +214,12 @@
+             raise AccessError('This account task is not authorized in this conversation.',403)
+         original = turn.source.to_dict()
+         if turn.message_id:original['message_id']=turn.message_id
++        edits = getattr(policy.adapter, '_message_edits', None)
++        revision = edits.lookup((turn.source.scope_id, turn.source.chat_id, turn.source.user_id,
++                                 original.get('message_id'))) if edits else None
++        if revision:
++            original['slack_request_version'] = str(revision.version)
++            original['slack_request_digest'] = revision.digest
+         original['thread_id'] = turn.source.thread_id or turn.source.message_id or turn.message_id
+         if not original['thread_id']:
+             raise AccessError('The originating Slack message is unavailable.',409)
+diff --git a/verification/probes/test_clanker_channel_control.py b/verification/probes/test_clanker_channel_control.py
+--- a/verification/probes/test_clanker_channel_control.py
++++ b/verification/probes/test_clanker_channel_control.py
+@@ -127,6 +127,33 @@
+         for task in (owned_task, other_task, sibling_task):
+             task.cancel()
+         await asyncio.gather(owned_task, other_task, sibling_task, return_exceptions=True)
++
++
++@pytest.mark.asyncio
++async def test_message_edit_cancels_only_its_worker_and_forms_in_same_thread(workspace, monkeypatch):
++    await provision(workspace)
++    _, owned = await detour(workspace, owner='UA', message_id='200.2', task='Old request.')
++    _, sibling = await detour(workspace, owner='UA', message_id='200.3', task='Another request.')
++    runner = native_runner(workspace, monkeypatch)
++    _, reasons, task = await running(workspace, owned)
++    _, sibling_reasons, sibling_task = await running(workspace, sibling)
++    service = workspace.service
++    turn = worker_turn(workspace, owned)
++    request = service.store.create(team='TT', owner='UA', home=service.private_home('TT', 'UA'),
++        task_id=turn.task_id, source=owned.source.to_dict(), task=turn.message,
++        kind='login', label='Dummy account', origin='https://accounts.example.com')
++    service.cloud_browser = CleanupBrowser()
++    try:
++        await service.channel_control.stop_message(channel_turn(workspace, message_id='200.2').source, '200.2')
++        assert reasons and task.cancelled()
++        assert not sibling_reasons and not sibling_task.done()
++        assert service.store.channel_task(owned.source.to_dict())['task_state'] == 'cancelled'
++        assert service.store.channel_task(sibling.source.to_dict())['task_state'] == 'active'
++        with service.store.connection() as db:
++            assert db.execute('SELECT status FROM requests WHERE id=?', (request['id'],)).fetchone()[0] == 'cancelled'
++    finally:
++        sibling_task.cancel()
++        await asyncio.gather(task, sibling_task, return_exceptions=True)
+ 
+ 
+ @pytest.mark.asyncio

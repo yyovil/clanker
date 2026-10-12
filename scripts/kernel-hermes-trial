@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Run the project Hermes with isolated Kernel trial state.
+set -euo pipefail
+umask 077
+
+trial_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+hermes_project="${CLANKER_HERMES_PROJECT:-/Users/tanishqpalandurkar/Projects/yyot}"
+trial_home="$trial_root/.local/kernel-hermes-trial/home"
+python="$hermes_project/.local/hermes-lab/venv/bin/python"
+hermes="$hermes_project/.local/hermes-lab/venv/bin/hermes"
+
+if [[ ! -x "$python" || ! -x "$hermes" ]]; then
+  echo "Set CLANKER_HERMES_PROJECT to the project containing .local/hermes-lab/venv." >&2
+  exit 1
+fi
+
+mkdir -p "$trial_home" "$trial_root/.local/kernel-hermes-trial/workspace"
+touch "$trial_home/.env"
+chmod 600 "$trial_home/.env"
+cd "$trial_root/.local/kernel-hermes-trial/workspace"
+
+case "${1:-}" in
+  key|check|smoke)
+    command=("$python" "$trial_root/scripts/kernel_trial.py" "$1")
+    ;;
+  *)
+    command=("$hermes" "$@")
+    ;;
+esac
+
+exec env -i \
+  HOME="$HOME" \
+  PATH="$hermes_project/.local/hermes-lab/venv/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.nix-profile/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  TERM="${TERM:-xterm-256color}" \
+  LANG="${LANG:-en_US.UTF-8}" \
+  HERMES_HOME="$trial_home" \
+  PYTHONPATH="$hermes_project/hermes" \
+  HERMES_DISABLE_LAZY_INSTALLS=1 \
+  HERMES_STARTUP_WARMUP_TIMEOUT=0 \
+  "${command[@]}"

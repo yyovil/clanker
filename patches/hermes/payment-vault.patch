@@ -1,0 +1,29 @@
+diff --git a/hermes/agent/vault_store.py b/hermes/agent/vault_store.py
+--- a/hermes/agent/vault_store.py
++++ b/hermes/agent/vault_store.py
+@@ -47,7 +47,7 @@
+     "address_line1": "address-line1", "address_line2": "address-line2", "city": "address-level2",
+     "state": "address-level1", "postal_code": "postal-code", "country": "country-name",
+ }
+-REQUIRED_FIELDS = {"payment": ("card_number", "exp_month", "exp_year", "cvc"),
++REQUIRED_FIELDS = {"payment": ("card_number", "exp_month", "exp_year"),
+                    "address": ("address_line1", "city", "postal_code", "country")}
+ 
+ _DEFAULT_PORTS = {"http": 80, "https": 443}
+diff --git a/hermes/tests/tools/test_browser_vault.py b/hermes/tests/tools/test_browser_vault.py
+index 1cefdf7..699aa3e 100644
+--- a/hermes/tests/tools/test_browser_vault.py
++++ b/hermes/tests/tools/test_browser_vault.py
+@@ -125,8 +125,10 @@ class TestVaultStore:
+         yet unfillable, and a missing required field would make the item dead on every checkout."""
+         meta = store.add_item(kind="payment", label="Card", secret={**_CARD, "note": "personal"})
+         assert "note" not in store.resolve_secret(meta.id)
+-        with pytest.raises(VaultError, match="cvc"):
+-            store.add_item(kind="payment", label="Card", secret={k: v for k, v in _CARD.items() if k != "cvc"})
++        reusable = store.add_item(kind="payment", label="Reusable card", secret={k: v for k, v in _CARD.items() if k != "cvc"})
++        assert "cvc" not in store.resolve_secret(reusable.id)
++        with pytest.raises(VaultError, match="card_number"):
++            store.add_item(kind="payment", label="Card", secret={k: v for k, v in _CARD.items() if k != "card_number"})
+ 
+     def test_unknown_kind_rejected(self, store):
+         with pytest.raises(VaultError):

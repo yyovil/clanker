@@ -1,0 +1,458 @@
+diff --git a/runtime/vault/store.py b/runtime/vault/store.py
+--- a/runtime/vault/store.py
++++ b/runtime/vault/store.py
+@@ -89,7 +89,9 @@
+                                ('task_state', 'TEXT'), ('result_payload', 'BLOB'),
+                                ('result_message_ts', 'TEXT'), ('result_event_id', 'TEXT'),
+                                ('last_inbound_id', 'TEXT'), ('result_private', 'INTEGER NOT NULL DEFAULT 0'),
+-                               ('result_return_state', "TEXT NOT NULL DEFAULT 'completed'")]:
++                               ('result_return_state', "TEXT NOT NULL DEFAULT 'completed'"),
++                               ('recovery_event_id', 'TEXT'), ('recovery_state', 'TEXT'),
++                               ('recovery_profile', 'TEXT'), ('recovery_form_id', 'TEXT')]:
+                 if name not in columns:db.execute(f'ALTER TABLE transfers ADD COLUMN {name} {kind}')
+         os.chmod(self.path, 0o600)
+ 
+@@ -374,16 +376,73 @@
+             if all(source.get(key)==expected.get(key) for key in ('platform','scope_id','user_id','chat_id','thread_id')):
+                 return dict(row)
+ 
+-    def begin_channel_reply(self, task_id, event_id):
++    def begin_channel_reply(self, task_id, event_id, *, recovery=False):
+         with self.connection() as db:
+             db.execute('BEGIN IMMEDIATE')
+             row = db.execute('SELECT * FROM transfers WHERE id=?', (task_id,)).fetchone()
+             if (not row or row['task_state'] not in ('active','completed') or
+                     row['result_event_id']==event_id):
+                 return False
++            if recovery and (row['task_state']!='active' or row['recovery_state']!='pending' or
++                    row['recovery_event_id']!=event_id or row['last_inbound_id'] not in (None,event_id)):
++                return False
+             db.execute("UPDATE transfers SET task_state='active',last_inbound_id=? WHERE id=?",
+                        (event_id,task_id))
+             return True
++
++    def pending_task_recoveries(self):
++        """Persist one continuation for the evidenced pre-fix DM profile split."""
++        with self.connection() as db:
++            db.execute('BEGIN IMMEDIATE')
++            tasks = db.execute("SELECT * FROM transfers WHERE reply_mode='channel' "
++                               "AND task_state='active' AND status='resumed'").fetchall()
++            for task in tasks:
++                if (task['recovery_event_id'] or task['last_inbound_id'] or
++                        task['result_event_id'] or not task['source']):
++                    continue
++                expected = json.loads(task['source'])
++                requests = db.execute('SELECT id,source,kind,status,origin,handle,created,grant_id,approver,'
++                    'gateway_event_id,code_payload IS NULL AS consumed FROM requests '
++                    'WHERE team=? AND owner=? AND home=? AND kind=\'code\' ORDER BY created DESC,rowid DESC',
++                    (task['team'],task['owner'],task['home'])).fetchall()
++                waiting = next((row for row in requests if row['status']=='waiting' and
++                    self.same_task_source(json.loads(row['source']),expected)),None)
++                if waiting is None:continue
++                for request in requests:
++                    source = json.loads(request['source'])
++                    if (request['status']!='resumed' or not request['consumed'] or
++                            request['created']<waiting['created'] or not request['gateway_event_id'] or
++                            source.get('message_id')!=request['gateway_event_id'] or
++                            source.get('profile')==expected.get('profile') or
++                            any(request[key]!=waiting[key] for key in ('origin','handle','grant_id','approver')) or
++                            not self.same_task_source(source | {'profile':expected.get('profile')},expected)):
++                        continue
++                    event_id='clanker-task-recovery-v1:'+task['id']+':'+request['id']
++                    db.execute("UPDATE transfers SET recovery_event_id=?,recovery_state='pending',"
++                               "recovery_profile=?,recovery_form_id=? WHERE id=?",
++                               (event_id,source.get('profile'),waiting['id'],task['id']))
++                    break
++            return [dict(row) for row in db.execute("SELECT * FROM transfers WHERE reply_mode='channel' "
++                "AND task_state='active' AND recovery_state='pending'")]
++
++    def is_pending_recovery(self, task_id, event_id):
++        with self.connection() as db:
++            row=db.execute("SELECT last_inbound_id FROM transfers WHERE id=? AND task_state='active' "
++                           "AND recovery_state='pending' AND recovery_event_id=?",(task_id,event_id)).fetchone()
++        return bool(row and row['last_inbound_id'] in (None,event_id))
++
++    def mark_task_recovered(self, task_id, event_id):
++        with self.connection() as db:
++            db.execute("UPDATE transfers SET recovery_state='done' WHERE id=? AND recovery_event_id=?",
++                       (task_id,event_id))
++
++    def expire_recovery_form(self, task_id, event_id):
++        """Supersede only the old form after live destination authorization."""
++        with self.connection() as db:
++            db.execute("UPDATE requests SET expires=min(expires,?) WHERE status='waiting' AND id IN "
++                       "(SELECT recovery_form_id FROM transfers WHERE id=? AND recovery_event_id=? "
++                       "AND recovery_state='pending' AND task_state='active')",
++                       (self.clock(),task_id,event_id))
+ 
+     def channel_form_status(self, source):
+         with self.connection() as db:
+diff --git a/runtime/vault/service.py b/runtime/vault/service.py
+--- a/runtime/vault/service.py
++++ b/runtime/vault/service.py
+@@ -436,13 +436,19 @@
+                 if oid==compute_obligation_id(key,event_id,content):return True
+         return False
+ 
+-    async def resume(self, row, *, transfer=False):
++    async def resume(self, row, *, transfer=False, recovery_event_id=None):
+         from gateway.session import SessionSource
+         from gateway.platforms.event import MessageEvent
+         member = self.validate_member(row['team'],row['owner'])
+         source = SessionSource.from_dict(json.loads(row['source']))
+         channel_task = self.channel_tasks.restore(source)
+         finish=self.store.mark_transfer_resumed if transfer else self.store.mark_resumed
++        if recovery_event_id:
++            if not transfer:raise AccessError('Task recovery requires its original private handoff.',403)
++            finish=lambda task_id:self.store.mark_task_recovered(task_id,recovery_event_id)
++            if (row.get('recovery_profile')!=member['profile'] or
++                    not self.store.is_pending_recovery(row['id'],recovery_event_id)):
++                finish(row['id']);return
+         if channel_task:
+             if channel_task['task_state']=='result_pending' and channel_task['result_return_state']=='active':
+                 await self.channel_tasks.deliver(channel_task['id'])
+@@ -458,7 +464,7 @@
+         expected_profile = source.profile if channel_task else member['profile']
+         if source.chat_id!=member['dm_id'] or source.profile!=expected_profile or self.private_home(row['team'],row['owner'])!=Path(row['home']):
+             raise AccessError('The original private task is no longer authorized.',403)
+-        if not self.store.is_pending(row['id'],transfer=transfer):return
++        if not recovery_event_id and not self.store.is_pending(row['id'],transfer=transfer):return
+         prefix=(("Continue the original channel task using only this requester's authorized account. "
+                  "This is an isolated task: do not use unrelated private conversations or files. "
+                  "The backend returns your final requested result to the original channel thread. "
+@@ -467,7 +473,13 @@
+                 f"{'Verification code submitted; use clanker_vault_enter_code' if row['kind']=='code' else 'Access saved'} for {row['label']} ({row['origin']}). Credential handle: {row['handle']}. Authentication is only a step in the original task below. After checking it, continue the selected task from its stopping point. Preserve confirmed route, dates, passengers, selections and price decisions. Ask only for missing details; login success alone is not task completion.")
+         if not transfer and row['kind']=='payment':
+             prefix=f"The owner approved purchase request {row['id']}. Use clanker_pay with this request_id in the existing local checkout. This approval is single use and expires quickly. Verify the merchant receipt before reporting paid; never automatically retry an unknown outcome."
+-        event_id=('clanker-private-resume-' if transfer else 'clanker-access-resume-')+row['id']
++        if recovery_event_id:
++            prefix += ('\nThis task was stranded by an earlier DM routing error. Resume the original goal automatically '
++                       'without asking the requester to say continue. Verification in another profile is not account '
++                       'authorization for this worker. Check only this isolated task\'s own browser session; if verification '
++                       'is still needed, request a fresh private code here. Do not replay old codes, copy cookies, or transfer '
++                       'payment approval. Preserve confirmed choices and continue until the next real blocker or verified result.')
++        event_id=recovery_event_id or ('clanker-private-resume-' if transfer else 'clanker-access-resume-')+row['id']
+         event = MessageEvent(source=source,user_id=source.user_id,user_name=source.user_name,
+             text=prefix+'\n\nOriginal request: '+row['task'],message_id=event_id,
+             allow_gateway_control=False,metadata={'clanker_private_resume' if transfer else 'clanker_access_resume':row['id']})
+@@ -492,8 +504,10 @@
+                 return
+         if await asyncio.to_thread(self.delivery_owned,key,event_id):
+             finish(row['id']);return
+-        if channel_task and not self.store.begin_channel_reply(channel_task['id'],event_id):
++        if channel_task and not self.store.begin_channel_reply(channel_task['id'],event_id,recovery=bool(recovery_event_id)):
+             finish(row['id']);return
++        if recovery_event_id:
++            self.store.expire_recovery_form(row['id'],recovery_event_id)
+         await adapter.handle_message(event)
+         if not getattr(event,'_gateway_accepted',False):
+             return
+@@ -514,16 +528,19 @@
+         await self.channel_tasks.drain()
+         async def dispatch(row,transfer):
+             try:
+-                if transfer:
++                recovery_event_id=row.get('recovery_event_id') if row.get('recovery_state')=='pending' else None
++                if transfer and not recovery_event_id:
+                     await self.deliver_transfer(row)
+                     row=next((item for item in self.store.pending_transfers() if item['id']==row['id']),None)
+                     if row is None:return
+                 if not transfer and row['status']=='waiting':await self.deliver_link(row)
+-                else:await self.resume(row,transfer=transfer)
++                else:await self.resume(row,transfer=transfer,recovery_event_id=recovery_event_id)
+             except Exception:
+                 # No raw exceptions or links in logs. Retry on the next pass.
+                 pass
+-        for transfer,rows in ((False,self.store.pending_links()+self.store.pending_resumes()),(True,self.store.pending_transfers())):
++        recoveries=await asyncio.to_thread(self.store.pending_task_recoveries)
++        for transfer,rows in ((False,self.store.pending_links()+self.store.pending_resumes()),
++                             (True,self.store.pending_transfers()+recoveries)):
+             for row in rows:
+                 row_id=row['id']
+                 if row_id in self.resume_tasks:continue
+diff --git a/verification/probes/test_clanker_legacy_recovery.py b/verification/probes/test_clanker_legacy_recovery.py
+new file mode 100644
+--- /dev/null
++++ b/verification/probes/test_clanker_legacy_recovery.py
+@@ -0,0 +1,281 @@
++"""Automatic recovery of a historical Slack handoff, without human ingress.
++
++Profiles, encrypted storage, membership checks, resume and response publication
++are real. Slack transport and model execution use the existing fixture; these
++tests do not assert merchant login, flight availability or a real purchase.
++"""
++import asyncio
++import json
++
++import pytest
++
++from test_clanker_channel_tasks import workspace, provision, channel_turn, settle, worker_turn
++from agent.gateway_context import isolated_gateway_task
++from agent.vault_store import VaultStore
++from gateway.session import SessionSource, build_session_key
++from vault.service import VaultService
++
++
++SELECTED_FLIGHT = ('Nagpur to Mumbai on 9 October, one adult, AI-2584 at 10:10 PM, '
++                   'accepted INR 6540.')
++PASSWORD_CANARY = 'DUMMY_LEGACY_FLIGHT_PRIVATE_PASSWORD'
++CODE_CANARY = '842719'
++UNRELATED_CANARY = 'UNRELATED_PERSONAL_DM_LOGIN_CANARY'
++
++
++async def legacy_task(workspace, *, owner='UA', index=0):
++    """Reproduce old metadata only in the fixture's temporary database."""
++    service = workspace.service
++    original = channel_turn(workspace, owner=owner, task='yeah',
++                            thread='200.' + str(index), message_id='300.' + str(index))
++    original.conversation = (('user', SELECTED_FLIGHT),
++                             ('assistant', 'Continue the selected booking privately.'))
++    await service.move_private(original)
++    await settle(service)
++    initial = workspace.events[-1]
++    worker = worker_turn(workspace, initial)
++    transfer = service.store.channel_task(initial.source.to_dict())
++    home = service.private_home('TT', owner)
++    meta = VaultStore(home / 'vault').add_item('login', 'Fixture flights ' + str(index),
++        {'identifier': owner.lower() + '@fixture.invalid', 'identifier_type': 'email',
++         'password': PASSWORD_CANARY}, origin='https://flights.invalid')
++    form = await service.request_code(worker, meta)
++    ordinary_source = SessionSource.from_dict(initial.source.to_dict() | {
++        'profile': workspace.policy.state['members'][owner]['profile'],
++        'message_id': 'misrouted-human-' + str(index),
++    })
++    ordinary_task = 'ordinary-login-task-' + transfer['id']
++    misplaced = service.store.create(team='TT', owner=owner, home=home,
++        task_id=ordinary_task, source=ordinary_source.to_dict(), task=UNRELATED_CANARY,
++        kind='code', label='Fixture flights verification', origin=meta.origin,
++        handle=meta.id, gateway_event_id=ordinary_source.message_id)
++    service.save_code(misplaced['id'], service.store.token(misplaced['id']),
++                      {'team': 'TT', 'owner': owner}, {'code': CODE_CANARY})
++    assert service.store.consume_code(team='TT', owner=owner, home=home,
++        handle=meta.id, origin=meta.origin, task_id=ordinary_task) == CODE_CANARY
++    service.store.mark_resumed(misplaced['id'])
++    with service.store.connection() as db:
++        worker_created = db.execute('SELECT created FROM requests WHERE id=?',
++                                    (form['request_id'],)).fetchone()[0]
++        db.execute('UPDATE requests SET created=? WHERE id=?',
++                   (worker_created + 1, misplaced['id']))
++        # The original native turn predates the new continuation columns.
++        db.execute("UPDATE transfers SET status='resumed',task_state='active',"
++                   'last_inbound_id=NULL,result_event_id=NULL WHERE id=?', (transfer['id'],))
++    return initial, transfer, form, misplaced, meta
++
++
++def restart(workspace):
++    restored = VaultService(workspace.policy, workspace.service.config)
++    workspace.policy.vault_service = restored
++    workspace.service = restored
++    return restored
++
++
++def fixture_dispatch(workspace, response=None, *, fresh_form_meta=None):
++    """Replace only model execution; retain authorization and durable outputs."""
++    async def handle(event):
++        assert workspace.policy.authorize_source(event.source)
++        workspace.events.append(event)
++        event._gateway_accepted = True
++        async def execute():
++            if fresh_form_meta is not None:
++                await workspace.service.request_code(worker_turn(workspace, event), fresh_form_meta)
++                answer = 'Use the new private verification form to continue.'
++            else:
++                answer = response
++            if answer:
++                await workspace.service.channel_tasks.handle_response(event, answer, workspace.runner)
++        workspace.adapter._session_tasks[workspace.adapter._event_session_key(event)] = asyncio.create_task(execute())
++    workspace.adapter.handle_message = handle
++
++
++def assert_same_worker(initial, recovered, transfer, misplaced):
++    event_id = 'clanker-task-recovery-v1:' + transfer['id'] + ':' + misplaced['id']
++    assert recovered.message_id == event_id
++    assert recovered.source.profile == initial.source.profile
++    assert recovered.source.thread_id == initial.source.thread_id
++    assert recovered.source.chat_id == initial.source.chat_id
++    assert recovered.source.user_id == initial.source.user_id
++    assert isolated_gateway_task(recovered.source).task_id == transfer['id']
++    assert build_session_key(recovered.source, profile=recovered.source.profile) == build_session_key(
++        initial.source, profile=initial.source.profile)
++    assert SELECTED_FLIGHT in recovered.text
++    assert 'isolated' in recovered.text.lower()
++    assert 'fresh' in recovered.text.lower()
++    assert CODE_CANARY not in recovered.text and PASSWORD_CANARY not in recovered.text
++    assert UNRELATED_CANARY not in recovered.text
++    return event_id
++
++
++@pytest.mark.asyncio
++async def test_restart_automatically_recovers_selected_flight_a_b_a_without_human_message(workspace):
++    await provision(workspace)
++    initial_dispatch = workspace.adapter.handle_message
++    for index, owner in enumerate(('UA', 'UB', 'UA')):
++        workspace.adapter.handle_message = initial_dispatch
++        initial, transfer, form, misplaced, _ = await legacy_task(workspace, owner=owner, index=index)
++        restored = restart(workspace)
++        before = len(workspace.events)
++        answer = 'The selected flight is ready for missing passenger details, task ' + str(index)
++        fixture_dispatch(workspace, answer)
++        await restored.drain()
++        await settle(restored)
++        assert len(workspace.events) == before + 1
++        recovered = workspace.events[-1]
++        event_id = assert_same_worker(initial, recovered, transfer, misplaced)
++        posted = [m for m in workspace.messages if m['channel'] == 'CSHARED'
++                  and m.get('thread_ts') == '200.' + str(index)]
++        assert [m['text'] for m in posted] == [answer]
++        assert restored.store.channel_task(recovered.source.to_dict())['task_state'] == 'completed'
++        assert not restored.store.is_pending_recovery(transfer['id'], event_id)
++        # The obsolete worker form is expired, and the consumed code stays gone.
++        with restored.store.connection() as db:
++            obsolete = db.execute('SELECT status,expires FROM requests WHERE id=?',
++                                  (form['request_id'],)).fetchone()
++            consumed = db.execute('SELECT status,code_payload FROM requests WHERE id=?',
++                                  (misplaced['id'],)).fetchone()
++        assert obsolete['status'] == 'waiting' and obsolete['expires'] <= restored.store.clock()
++        assert consumed['status'] == 'resumed' and consumed['code_payload'] is None
++        again = restart(workspace)
++        await again.drain()
++        await settle(again)
++        assert len(workspace.events) == before + 1
++        assert [m['text'] for m in workspace.messages if m['channel'] == 'CSHARED'
++                and m.get('thread_ts') == '200.' + str(index)] == [answer]
++
++
++@pytest.mark.asyncio
++async def test_busy_worker_retains_one_recovery_intent_across_restart(workspace):
++    await provision(workspace)
++    initial, transfer, _, misplaced, _ = await legacy_task(workspace)
++    restored = restart(workspace)
++    key = build_session_key(initial.source, profile=initial.source.profile)
++    workspace.adapter._active_sessions[key] = True
++    before = len(workspace.events)
++    await restored.drain()
++    await settle(restored)
++    event_id = 'clanker-task-recovery-v1:' + transfer['id'] + ':' + misplaced['id']
++    assert len(workspace.events) == before
++    assert restored.store.is_pending_recovery(transfer['id'], event_id)
++    candidates = restored.store.pending_task_recoveries()
++    assert [row['recovery_event_id'] for row in candidates] == [event_id]
++    again = restart(workspace)
++    workspace.adapter._active_sessions.pop(key)
++    fixture_dispatch(workspace, 'The selected flight is ready to continue.')
++    await again.drain()
++    await settle(again)
++    assert len(workspace.events) == before + 1
++    assert_same_worker(initial, workspace.events[-1], transfer, misplaced)
++    assert not again.store.is_pending_recovery(transfer['id'], event_id)
++
++
++@pytest.mark.asyncio
++async def test_fresh_private_form_owns_continuation_without_redispatching_recovery(workspace):
++    await provision(workspace)
++    initial, transfer, _, misplaced, meta = await legacy_task(workspace)
++    restored = restart(workspace)
++    fixture_dispatch(workspace, fresh_form_meta=meta)
++    before = len(workspace.events)
++    await restored.drain()
++    await settle(restored)
++    assert len(workspace.events) == before + 1
++    recovered = workspace.events[-1]
++    event_id = assert_same_worker(initial, recovered, transfer, misplaced)
++    assert restored.store.channel_task(recovered.source.to_dict())['task_state'] == 'active'
++    with restored.store.connection() as db:
++        new_form = db.execute('SELECT * FROM requests WHERE gateway_event_id=?', (event_id,)).fetchone()
++    assert new_form and new_form['status'] == 'waiting'
++    assert json.loads(new_form['source'])['profile'] == initial.source.profile
++    assert workspace.messages[-1]['channel'] == initial.source.chat_id
++    assert workspace.messages[-1]['thread_ts'] == initial.source.thread_id
++    assert not any(m['channel'] == 'CSHARED' for m in workspace.messages)
++    assert not restored.store.is_pending_recovery(transfer['id'], event_id)
++    again = restart(workspace)
++    await again.drain()
++    await settle(again)
++    assert len(workspace.events) == before + 1
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize('mismatch', [
++    'owner', 'team', 'thread', 'origin', 'home', 'handle', 'grant', 'current_profile',
++    'human_event', 'unconsumed_code', 'completed', 'cancelled', 'new_human_work',
++])
++async def test_recovery_denies_mismatched_or_superseded_legacy_task(workspace, mismatch):
++    await provision(workspace)
++    _, transfer, _, misplaced, _ = await legacy_task(workspace)
++    with workspace.service.store.connection() as db:
++        request = dict(db.execute('SELECT * FROM requests WHERE id=?', (misplaced['id'],)).fetchone())
++        source = json.loads(request['source'])
++        if mismatch == 'owner':
++            db.execute('UPDATE requests SET owner=? WHERE id=?', ('UB', misplaced['id']))
++        elif mismatch == 'team':
++            db.execute('UPDATE requests SET team=? WHERE id=?', ('OTHER', misplaced['id']))
++        elif mismatch == 'thread':
++            source['thread_id'] = 'unrelated-private-thread'
++        elif mismatch == 'origin':
++            db.execute('UPDATE requests SET origin=? WHERE id=?', ('https://other.invalid', misplaced['id']))
++        elif mismatch == 'home':
++            db.execute('UPDATE requests SET home=? WHERE id=?',
++                       (str(workspace.service.private_home('TT', 'UB')), misplaced['id']))
++        elif mismatch == 'handle':
++            db.execute('UPDATE requests SET handle=? WHERE id=?', ('unrelated-handle', misplaced['id']))
++        elif mismatch == 'grant':
++            db.execute('UPDATE requests SET grant_id=? WHERE id=?', ('unrelated-grant', misplaced['id']))
++        elif mismatch == 'current_profile':
++            source['profile'] = 'retired-owner-profile'
++        elif mismatch == 'human_event':
++            source['message_id'] = 'another-human-event'
++        elif mismatch == 'unconsumed_code':
++            db.execute('UPDATE requests SET code_payload=? WHERE id=?',
++                       (workspace.service.store.code_crypto().encrypt(CODE_CANARY.encode()), misplaced['id']))
++        elif mismatch in ('completed', 'cancelled'):
++            db.execute('UPDATE transfers SET task_state=? WHERE id=?', (mismatch, transfer['id']))
++        elif mismatch == 'new_human_work':
++            db.execute('UPDATE transfers SET last_inbound_id=? WHERE id=?', ('new-owner-reply', transfer['id']))
++        db.execute('UPDATE requests SET source=? WHERE id=?', (json.dumps(source), misplaced['id']))
++    restored = restart(workspace)
++    before = len(workspace.events)
++    await restored.drain()
++    await settle(restored)
++    assert len(workspace.events) == before
++    assert not any(m['channel'] == 'CSHARED' for m in workspace.messages)
++
++
++@pytest.mark.asyncio
++async def test_new_human_reply_supersedes_pending_recovery_intent(workspace):
++    await provision(workspace)
++    _, transfer, _, misplaced, _ = await legacy_task(workspace)
++    restored = restart(workspace)
++    event_id = 'clanker-task-recovery-v1:' + transfer['id'] + ':' + misplaced['id']
++    assert restored.store.pending_task_recoveries()[0]['recovery_event_id'] == event_id
++    assert restored.store.begin_channel_reply(transfer['id'], 'new-owner-reply')
++    assert not restored.store.is_pending_recovery(transfer['id'], event_id)
++    before = len(workspace.events)
++    await restored.drain()
++    await settle(restored)
++    assert len(workspace.events) == before
++
++
++@pytest.mark.asyncio
++async def test_human_reply_during_recovery_authorization_wins(workspace, monkeypatch):
++    await provision(workspace)
++    _, transfer, form, misplaced, _ = await legacy_task(workspace)
++    restored = restart(workspace)
++    validate = restored.channel_tasks.validate_destination
++    async def admit_newer_reply(row):
++        original = await validate(row)
++        assert restored.store.begin_channel_reply(transfer['id'], 'new-owner-reply')
++        return original
++    monkeypatch.setattr(restored.channel_tasks, 'validate_destination', admit_newer_reply)
++    before = len(workspace.events)
++    await restored.drain()
++    await settle(restored)
++    assert len(workspace.events) == before
++    with restored.store.connection() as db:
++        current = db.execute('SELECT last_inbound_id FROM transfers WHERE id=?',
++                             (transfer['id'],)).fetchone()
++        waiting = db.execute('SELECT expires FROM requests WHERE id=?', (form['request_id'],)).fetchone()
++    assert current['last_inbound_id'] == 'new-owner-reply'
++    assert waiting['expires'] > restored.store.clock()

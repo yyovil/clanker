@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Apply concise, natural-language defaults to every served Clanker profile."""
+from pathlib import Path
+import os
+import sys
+
+root = Path(__file__).resolve().parents[1]
+home = root / ".local/hermes-lab/home"
+os.environ["HERMES_HOME"] = str(home)
+sys.path.insert(0, str(root / "hermes"))
+from gateway.slack_workspace import CLANKER_STYLE_SETTINGS
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString
+from utils import atomic_roundtrip_yaml_update
+
+from gateway.config import load_gateway_config
+from gateway.run import _multiplex_profile_homes, _profile_runtime_scope
+
+with _profile_runtime_scope(home):
+    profiles = dict(_multiplex_profile_homes(load_gateway_config()))
+profiles.setdefault("default", home)
+for name, target in sorted(profiles.items()):
+    config_path = target / "config.yaml"
+    for dotted, value in CLANKER_STYLE_SETTINGS.items():
+        # The gateway's YAML 1.1 reader treats an unquoted "off" as False.
+        stored = DoubleQuotedScalarString(value) if isinstance(value, str) else value
+        atomic_roundtrip_yaml_update(config_path, dotted, stored)
+    print(f"{name}: opening persona only; onboarding tips and tool progress disabled")

@@ -1,0 +1,59 @@
+diff --git a/hermes/plugins/platforms/slack/adapter.py b/hermes/plugins/platforms/slack/adapter.py
+--- a/hermes/plugins/platforms/slack/adapter.py
++++ b/hermes/plugins/platforms/slack/adapter.py
+@@ -4572,6 +4572,11 @@
+         # before the slow enrichment awaits. Claiming before the filters would let an ignored
+         # original block a later "@bot" edit from summoning the bot.
+         _claim_ts = str(event.get("ts") or "")
++        # A changed event can pass normalization while the original is awaiting
++        # admission/channel checks. Recheck after those awaits, then claim with
++        # no intervening await so an unfurl cannot become a second user turn.
++        if event.get("_slack_changed_event_ts") and _claim_ts in self._processed_message_ts:
++            return
+         if _claim_ts:
+             self._remember_processed_message_ts(_claim_ts)
+         if is_mentioned:
+diff --git a/hermes/tests/gateway/test_slack_unfurl_duplicate_turn.py b/hermes/tests/gateway/test_slack_unfurl_duplicate_turn.py
+--- a/hermes/tests/gateway/test_slack_unfurl_duplicate_turn.py
++++ b/hermes/tests/gateway/test_slack_unfurl_duplicate_turn.py
+@@ -113,6 +113,40 @@
+ 
+ 
+ class TestUnfurlDuringInflightMessage:
++    def test_unfurl_normalized_before_original_claim_is_suppressed_after_admission(self):
++        delivered = []
++        adapter = _make_adapter(delivered)
++        adapter._resolve_user_name = AsyncMock(return_value="richard")
++        first_entered, second_entered = asyncio.Event(), asyncio.Event()
++        release_first, release_second = asyncio.Event(), asyncio.Event()
++        calls = 0
++
++        async def slow_admission(*args, **kwargs):
++            nonlocal calls
++            calls += 1
++            if calls == 1:
++                first_entered.set()
++                await release_first.wait()
++            else:
++                second_entered.set()
++                await release_second.wait()
++            return False
++
++        adapter._peer_bot_drop = slow_admission
++
++        async def scenario():
++            first = asyncio.create_task(adapter._handle_slack_message(_original_event(), _body()))
++            await asyncio.wait_for(first_entered.wait(), timeout=2)
++            second = asyncio.create_task(adapter._handle_slack_message(_unfurl_event(), _body()))
++            await asyncio.wait_for(second_entered.wait(), timeout=2)
++            release_first.set()
++            await asyncio.wait_for(first, timeout=5)
++            release_second.set()
++            await asyncio.wait_for(second, timeout=5)
++
++        asyncio.run(scenario())
++        assert len(delivered) == 1
++
+     def test_unfurl_arriving_mid_flight_does_not_create_second_turn(self):
+         """THE regression: unfurl lands while the original is still awaiting."""
+         delivered = []

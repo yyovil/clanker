@@ -1,0 +1,22 @@
+diff --git a/hermes/gateway/run_turn.py b/hermes/gateway/run_turn.py
+--- a/hermes/gateway/run_turn.py
++++ b/hermes/gateway/run_turn.py
+@@ -4215,6 +4215,18 @@
+         from gateway.run import _float_env, _interim_metadata, _non_conversational_metadata
+         _notify_start = time.time()
+         _NOTIFY_INTERVAL = _float_env("HERMES_AGENT_NOTIFY_INTERVAL", 180)
++        # Multiplexed profiles may have different intervals. Their resolved
++        # configuration takes precedence without mutating the launch env.
++        _config = getattr(disp, 'user_config', None)
++        _agent_config = _config.get('agent') if isinstance(_config, dict) else None
++        if isinstance(_agent_config, dict) and 'gateway_notify_interval' in _agent_config:
++            import math
++            try:
++                _configured_interval = float(_agent_config['gateway_notify_interval'])
++                if math.isfinite(_configured_interval):
++                    _NOTIFY_INTERVAL = _configured_interval
++            except (TypeError, ValueError):
++                pass
+         _long_running_mode = disp._display_surface_mode("long_running_notifications", default=True, allow_generic=True)
+         if _NOTIFY_INTERVAL <= 0 or _long_running_mode == "off":
+             return

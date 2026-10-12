@@ -1,0 +1,43 @@
+(version 1)
+(deny default)
+
+; One template. Every path and port is supplied by the trusted context launcher.
+(allow process-fork)
+(allow process-exec
+  (subpath "/usr/bin") (subpath "/bin") (subpath "/sbin")
+  (subpath (param "PYTHON")) (subpath (param "HERMES_VENV")))
+(allow signal process-info* (target same-sandbox))
+(allow file-read-metadata)
+(allow file-read*
+  (literal "/")
+  (subpath "/System") (subpath "/usr/lib") (subpath "/usr/share")
+  (subpath "/usr/bin") (subpath "/bin") (subpath "/sbin")
+  (subpath (param "PYTHON")) (subpath (param "HERMES_VENV"))
+  (literal "/private/etc/hosts") (literal "/private/etc/resolv.conf")
+  (literal "/private/etc/services") (literal "/private/etc/localtime")
+  (literal "/dev/random") (literal "/dev/urandom"))
+(allow file-read* file-write* file-ioctl
+  (subpath (param "WORK")) (subpath (param "ARTIFACTS"))
+  (subpath (param "BROWSER")) (subpath (param "BU_WORK"))
+  (subpath (param "TERMINAL")) (subpath (param "TEMP"))
+  (literal "/dev/null"))
+; Do not let code replace a resource root with a symlink before a trusted spawn.
+(deny file-write-unlink
+  (literal (param "WORK")) (literal (param "ARTIFACTS"))
+  (literal (param "BROWSER")) (literal (param "BU_WORK"))
+  (literal (param "TERMINAL")) (literal (param "TEMP")))
+(allow sysctl-read
+  (sysctl-name-prefix "hw.")
+  (sysctl-name "kern.argmax") (sysctl-name "kern.hostname")
+  (sysctl-name "kern.osproductversion") (sysctl-name "kern.osrelease")
+  (sysctl-name "kern.ostype") (sysctl-name "kern.osversion")
+  (sysctl-name "kern.version") (sysctl-name "kern.maxfilesperproc")
+  (sysctl-name "kern.maxproc") (sysctl-name "sysctl.proc_cputype"))
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.bsd.dirhelper"))
+(allow system-socket (socket-domain AF_INET) (socket-domain AF_INET6) (socket-domain AF_UNIX))
+(allow network-outbound (remote ip (param "PROXY")) (remote ip (param "CDP")))
+(allow network-bind network-inbound (local ip (param "CDP")))
+(allow network-bind (local unix-socket (subpath (param "TEMP"))))
+(allow network-outbound (remote unix-socket (subpath (param "TEMP"))))

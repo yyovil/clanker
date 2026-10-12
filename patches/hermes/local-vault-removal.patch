@@ -1,0 +1,1603 @@
+diff --git a/hermes/agent/vault_store.py b/hermes/agent/vault_store.py
+--- a/hermes/agent/vault_store.py
++++ b/hermes/agent/vault_store.py
+@@ -1,485 +1,172 @@
+-"""Local encrypted vault for browser autofill secrets.
+-
+-Profile-scoped, model-blind credential store. Metadata (kind, label, origin,
+-timestamps) lives alongside an encrypted secret payload; the payload is
+-encrypted at rest with a locally generated Fernet key. The model only ever
+-sees opaque handles + metadata — secret values are resolved server-side by
+-the browser fill path and never enter tool results, logs, or the session DB.
+-
+-Design notes:
+-- Follows the repo's "default frictionless, 0600 files OK" policy: the key
+-  file and vault file are created 0600 under ``<HERMES_HOME>/vault/``.
+-- Ported design (opaque-handle vault fill) from Merit-Systems/OpenInstinct
+-  (MIT): lib/manager/server/secret-store.ts + vault services.
+-- Item kinds: ``login``, ``api_key``, ``payment`` and ``address``;
+-  ``PAYMENT_FIELDS`` / ``ADDRESS_FIELDS`` are the canonical payload names.
+-"""
+-
+-from __future__ import annotations
+-
+-import json
+-import os
+-import re
+-import threading
+-import uuid
+-from contextlib import contextmanager, suppress
+-from dataclasses import dataclass
+-from datetime import datetime, timezone
+-from pathlib import Path
+-from typing import Any, Dict, List, Optional
+-from urllib.parse import urlsplit
+-
+-from hermes_constants import get_hermes_home
+-from utils import atomic_write_bytes
+-
+-VAULT_KINDS = ("login", "api_key", "payment", "address")
+-
+-LOGIN_IDENTIFIER_TYPES = ("email", "phone", "username")
+-
+-# Canonical secret-payload fields per non-login kind. Each maps to the WHATWG autocomplete token the
+-# browser fill targets (agent/vault_login_classifier.py); the Desktop Add dialog and `hermes vault add`
+-# both write these names, so the fill never has to guess a user's ad-hoc field naming.
+-PAYMENT_FIELDS = {
+-    "card_number": "cc-number", "cardholder_name": "cc-name", "exp_month": "cc-exp-month",
+-    "exp_year": "cc-exp-year", "cvc": "cc-csc", "billing_postal_code": "postal-code",
+-}
+-ADDRESS_FIELDS = {
+-    "address_line1": "address-line1", "address_line2": "address-line2", "city": "address-level2",
+-    "state": "address-level1", "postal_code": "postal-code", "country": "country-name",
+-}
+-REQUIRED_FIELDS = {"payment": ("card_number", "exp_month", "exp_year"),
+-                   "address": ("address_line1", "city", "postal_code", "country")}
+-
+-_DEFAULT_PORTS = {"http": 80, "https": 443}
+-
+-_LOCK = threading.Lock()
+-
+-# fcntl is Unix-only; Windows locks a byte range with msvcrt (same shape as tools/skill_usage.py).
+-msvcrt = None
+-try:
+-    import fcntl
+-except ImportError:  # pragma: no cover - platform-specific fallback
+-    fcntl = None
+-    with suppress(ImportError):
+-        import msvcrt
+-
+-
+-class VaultError(Exception):
+-    """Vault failure that is safe to surface (never contains secret values)."""
+-
+-
+-_OTP_ALGOS = {"SHA1": "sha1", "SHA256": "sha256", "SHA512": "sha512"}
+-
+-
+-def normalize_otp_secret(value: str) -> str:
+-    """Accept a raw base32 seed or an ``otpauth://totp/...`` URI. Returns the canonical stored form:
+-    the bare uppercase base32 seed, followed by ``|digits|period|algo`` ONLY when the URI departs from
+-    the RFC 6238 defaults (6 / 30 / SHA1), so a plain seed stays a plain seed. Non-default parameters
+-    are honoured, not dropped: an 8-digit or 60-second authenticator would otherwise get wrong codes."""
+-    value = (value or "").strip()
+-    if not value:
+-        return ""
+-    digits, period, algo = 6, 30, "SHA1"
+-    if value.lower().startswith("otpauth://"):
+-        from urllib.parse import parse_qs, urlparse
+-        parsed = urlparse(value)
+-        if parsed.netloc.lower() != "totp":
+-            raise VaultError("only otpauth://totp links are supported (counter-based HOTP is not)")
+-        qs = {k.lower(): v[0] for k, v in parse_qs(parsed.query).items()}
+-        value = qs.get("secret", "")
+-        try:
+-            digits = int(qs.get("digits", digits))
+-            period = int(qs.get("period", period))
+-        except ValueError:
+-            raise VaultError("otpauth:// digits/period must be integers")
+-        algo = qs.get("algorithm", algo).upper().replace("-", "")
+-        if digits not in (6, 7, 8) or period <= 0 or algo not in _OTP_ALGOS:
+-            raise VaultError("unsupported otpauth:// parameters (digits 6-8, period > 0, SHA1/SHA256/SHA512)")
+-    seed = re.sub(r"[\s-]", "", value).upper().rstrip("=")
+-    if not seed or re.search(r"[^A-Z2-7]", seed):
+-        raise VaultError("authenticator key must be a base32 secret or an otpauth:// URI")
+-    if (digits, period, algo) == (6, 30, "SHA1"):
+-        return seed
+-    return f"{seed}|{digits}|{period}|{algo}"
+-
+-
+-def totp_now(seed: str, *, digits: int = 6, period: int = 30, at: Optional[float] = None) -> str:
+-    """RFC 6238 TOTP for a stored seed (see normalize_otp_secret for the ``seed|digits|period|algo``
+-    form). Stdlib only."""
+-    import base64
+-    import hashlib
+-    import hmac
+-    import struct
+-    import time as _time
+-
+-    algo = "sha1"
+-    if "|" in seed:
+-        seed, d, p, a = seed.split("|", 3)
+-        digits, period, algo = int(d), int(p), _OTP_ALGOS.get(a.upper(), "sha1")
+-    key = base64.b32decode(seed + "=" * (-len(seed) % 8), casefold=True)
+-    counter = int((at if at is not None else _time.time()) // period)
+-    digest = hmac.new(key, struct.pack(">Q", counter), getattr(hashlib, algo)).digest()
+-    offset = digest[-1] & 0x0F
+-    code = (struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % (10 ** digits)
+-    return str(code).zfill(digits)
+-
+-
+-def normalize_origin(url_or_origin: str) -> str:
+-    """Normalize a URL or origin to ``scheme://host[:port]``.
+-
+-    Default ports (80 for http, 443 for https) are stripped so that
+-    ``https://example.com`` and ``https://example.com:443`` compare equal.
+-    Raises :class:`VaultError` for values without a scheme + host.
+-    """
+-    value = (url_or_origin or "").strip()
+-    if not value:
+-        raise VaultError("origin is required")
+-    if "://" not in value:
+-        raise VaultError(f"origin must include a scheme (got {value!r})")
+-    parts = urlsplit(value)
+-    scheme = (parts.scheme or "").lower()
+-    host = (parts.hostname or "").lower()
+-    if not scheme or not host:
+-        raise VaultError(f"could not parse origin from {value!r}")
+-    try:
+-        port = parts.port
+-    except ValueError as exc:
+-        raise VaultError(f"invalid port in origin {value!r}") from exc
+-    if port is None or port == _DEFAULT_PORTS.get(scheme):
+-        return f"{scheme}://{host}"
+-    return f"{scheme}://{host}:{port}"
+-
+-
+-@dataclass(frozen=True)
+-class VaultItemMeta:
+-    """Metadata-only view of a vault item. Never contains secret values.
+-
+-    For password logins the identifier (email/username/phone) is metadata,
+-    not a secret: the agent may see it and type it itself. Only the password
+-    is vault-secret. SMS logins expose only a masked identifier; the number stays encrypted.
+-    """
+-
+-    id: str
+-    kind: str
+-    label: str
+-    origin: Optional[str]
+-    created_at: str
+-    identifier_type: Optional[str] = None
+-    identifier: Optional[str] = None
+-    has_otp: bool = False  # a TOTP seed is stored: 2FA codes can be minted without asking the user
+-    # Every origin the password manager bound to this item (manager backends only;
+-    # ``origin`` is the first/primary one). Fill matching stays exact-origin against
+-    # this list — no wildcard or subdomain inference is ever derived from it.
+-    allowed_origins: tuple = ()
+-    login_method: str = "password"
+-
+-    def to_dict(self) -> Dict[str, Any]:
+-        out = {
+-            "id": self.id,
+-            "kind": self.kind,
+-            "label": self.label,
+-            "origin": self.origin,
+-            "created_at": self.created_at,
+-        }
+-        if self.identifier is not None:
+-            out["identifier"] = self.identifier
+-            out["identifier_type"] = self.identifier_type
+-        if self.has_otp:
+-            out["has_otp"] = True
+-        if self.kind == "login" and self.login_method == "sms":
+-            out["login_method"] = "sms"
+-        if len(self.allowed_origins) > 1:
+-            out["allowed_origins"] = list(self.allowed_origins)
+-        return out
+-
+-
+-class VaultStore:
+-    """Encrypted, profile-scoped vault under ``<HERMES_HOME>/vault/``."""
+-
+-    def __init__(self, base_dir: Optional[Path] = None):
+-        self._base = Path(base_dir) if base_dir is not None else (
+-            Path(get_hermes_home()) / "vault"
+-        )
+-        self._vault_path = self._base / "vault.json.enc"
+-        self._key_path = self._base / "vault.key"
+-
+-    # -- key / crypto ------------------------------------------------------
+-
+-    def _ensure_dir(self) -> None:
+-        self._base.mkdir(mode=0o700, parents=True, exist_ok=True)
+-        # Route through the canonical securer (honors managed/NixOS
+-        # group-share mode and HERMES_UID/GID ownership) rather than a
+-        # bespoke chmod — same requirement as the browser-profile snapshot
+-        # dir (f1d05c review).
+-        try:
+-            from hermes_cli.config import _secure_dir
+-
+-            _secure_dir(self._base)
+-        except Exception:
+-            try:
+-                os.chmod(self._base, 0o700)
+-            except OSError:
+-                pass
+-
+-    @contextmanager
+-    def _locked(self):
+-        """Serialize read-modify-write cycles across threads AND processes: the Desktop gateway, a CLI
+-        `hermes vault add` and a TUI slash worker all write the same ``vault.json.enc``; two unlocked
+-        writers would drop each other's items."""
+-        with _LOCK:
+-            self._ensure_dir()
+-            lock_path = self._base / ".vault.lock"
+-            if msvcrt and (not lock_path.exists() or lock_path.stat().st_size == 0):
+-                lock_path.write_text(" ", encoding="utf-8")  # msvcrt needs a non-empty byte range to lock
+-            with open(lock_path, "r+" if msvcrt else "a+", encoding="utf-8") as fd:
+-                if fcntl:
+-                    fcntl.flock(fd, fcntl.LOCK_EX)
+-                elif msvcrt:
+-                    fd.seek(0)
+-                    msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
+-                try:
+-                    yield
+-                finally:
+-                    with suppress(OSError):
+-                        if fcntl:
+-                            fcntl.flock(fd, fcntl.LOCK_UN)
+-                        elif msvcrt:
+-                            fd.seek(0)
+-                            msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+-
+-    def _fernet(self):
+-        from cryptography.fernet import Fernet
+-
+-        self._ensure_dir()
+-        if not self._key_path.exists():
+-            key = Fernet.generate_key()
+-            fd = os.open(
+-                self._key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+-            )
+-            try:
+-                os.write(fd, key)
+-            finally:
+-                os.close(fd)
+-        else:
+-            key = self._key_path.read_bytes().strip()
+-        try:
+-            os.chmod(self._key_path, 0o600)
+-        except OSError:
+-            pass
+-        return Fernet(key)
+-
+-    # -- persistence -------------------------------------------------------
+-
+-    def _read_all(self) -> List[Dict[str, Any]]:
+-        if not self._vault_path.exists():
+-            return []
+-        blob = self._vault_path.read_bytes()
+-        if not blob:
+-            return []
+-        from cryptography.fernet import InvalidToken
+-
+-        try:
+-            raw = self._fernet().decrypt(blob)
+-        except InvalidToken as exc:
+-            raise VaultError(
+-                "vault file could not be decrypted (key mismatch or corruption)"
+-            ) from exc
+-        try:
+-            data = json.loads(raw.decode("utf-8"))
+-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+-            raise VaultError(
+-                "vault file is corrupted (invalid JSON)"
+-            ) from exc
+-        if not isinstance(data, dict):
+-            raise VaultError("vault file is corrupted (unexpected shape)")
+-        items = data.get("items", [])
+-        return items if isinstance(items, list) else []
+-
+-    def _write_all(self, items: List[Dict[str, Any]]) -> None:
+-        self._ensure_dir()
+-        payload = json.dumps({"version": 1, "items": items}).encode("utf-8")
+-        blob = self._fernet().encrypt(payload)
+-        # fsync_dir: the directory entry must be durable too (power loss between rename and next sync).
+-        atomic_write_bytes(self._vault_path, blob, mode=0o600, fsync_dir=True)
+-
+-    # -- public API ----------------------------------------------------------
+-
+-    def add_item(
+-        self,
+-        kind: str,
+-        label: str,
+-        secret: Dict[str, Any],
+-        origin: Optional[str] = None,
+-        *,
+-        idempotency_key: Optional[str] = None,
+-    ) -> VaultItemMeta:
+-        """Add an item. ``secret`` is the sensitive payload (encrypted at rest).
+-
+-        For ``kind='login'``, ``origin`` is required and the payload must
+-        contain ``identifier_type``, ``identifier`` and ``password`` for password logins. The
+-        identifier fields are NOT secret — they are moved into item metadata
+-        (the agent may see and type the identifier itself); only
+-        ``password`` stays in the encrypted secret payload. Passwordless SMS logins
+-        instead accept ``login_method=sms`` and ``phone_number``, keep the number
+-        secret, and expose a masked identifier. ``payment`` and
+-        ``address`` payloads remain fully secret. ``api_key`` requires an HTTPS
+-        origin and keeps the key entirely in the encrypted payload.
+-        """
+-        if kind not in VAULT_KINDS:
+-            raise VaultError(f"unknown vault kind {kind!r} (expected one of {VAULT_KINDS})")
+-        label = (label or "").strip()
+-        if not label:
+-            raise VaultError("label is required")
+-        norm_origin: Optional[str] = None
+-        identifier: Optional[str] = None
+-        identifier_type: Optional[str] = None
+-        secret = dict(secret)
+-        login_method = secret.pop("login_method", "password") if kind == "login" else "password"
+-        if kind == "login":
+-            if not origin:
+-                raise VaultError("origin is required for login items")
+-            norm_origin = normalize_origin(origin)
+-            if login_method == "sms":
+-                phone = secret.get("phone_number")
+-                if (set(secret) != {"phone_number"} or not isinstance(phone, str) or
+-                        not re.fullmatch(r"\+?[0-9]{7,15}", phone) or urlsplit(norm_origin).scheme != "https"):
+-                    raise VaultError("SMS logins require only a phone number and an HTTPS origin")
+-                identifier_type, identifier = "phone", "••••" + phone[-4:]
+-                secret = {"phone_number": phone}
+-            elif login_method != "password":
+-                raise VaultError("unsupported login method")
+-            else:
+-                secret, identifier_type, identifier = self._password_login(secret)
+-        elif kind == "api_key":
+-            if not origin:
+-                raise VaultError("origin is required for API key items")
+-            norm_origin = normalize_origin(origin)
+-            if urlsplit(norm_origin).scheme != "https":
+-                raise VaultError("API key items require an HTTPS origin")
+-            key = secret.get("api_key")
+-            if set(secret) != {"api_key"} or not isinstance(key, str) or not key.strip() or len(key) > 4096:
+-                raise VaultError("API key items require only a nonempty API key")
+-            secret = {"api_key": key}
+-        else:
+-            allowed = PAYMENT_FIELDS if kind == "payment" else ADDRESS_FIELDS
+-            secret = {k: str(v) for k, v in secret.items() if k in allowed and str(v or "").strip()}
+-            missing = [f for f in REQUIRED_FIELDS[kind] if f not in secret]
+-            if missing:
+-                raise VaultError(f"{kind} items require {', '.join(missing)}")
+-            if origin:
+-                norm_origin = normalize_origin(origin)
+-
+-        item_id = self.id_for_key(idempotency_key) if idempotency_key else f"vault_{uuid.uuid4().hex[:12]}"
+-        record = {
+-            "id": item_id,
+-            "kind": kind,
+-            "label": label,
+-            "origin": norm_origin,
+-            "created_at": datetime.now(timezone.utc).isoformat(),
+-            "identifier_type": identifier_type,
+-            "identifier": identifier,
+-            "secret": dict(secret),
+-        }
+-        if login_method == "sms":
+-            record["login_method"] = "sms"
+-        with self._locked():
+-            items = self._read_all()
+-            if idempotency_key:
+-                for existing in items:
+-                    if existing.get('id') == item_id:
+-                        if (existing.get('login_method', 'password') != login_method or
+-                                any(existing.get(field) != record[field] for field in
+-                                    ('kind', 'label', 'origin', 'identifier_type', 'identifier')) or
+-                                (login_method == 'sms' and existing.get('secret') != secret)):
+-                            raise VaultError('idempotency key belongs to a different item')
+-                        return self._meta(existing)
+-            items.append(record)
+-            self._write_all(items)
+-        return self._meta(record)
+-
+-    @staticmethod
+-    def _password_login(secret):
+-        id_type = secret.pop("identifier_type", None)
+-        if id_type not in LOGIN_IDENTIFIER_TYPES:
+-            raise VaultError(
+-                f"identifier_type must be one of {LOGIN_IDENTIFIER_TYPES}"
+-            )
+-        identifier = str(secret.pop("identifier", "") or "").strip()
+-        if not identifier or not secret.get("password"):
+-            raise VaultError("login items require identifier and password")
+-        identifier_type = str(id_type)
+-        # Login secret payload is password (+ optional TOTP seed); identifier lives in
+-        # metadata and any stray origin echo is dropped.
+-        otp_secret = normalize_otp_secret(str(secret.get("otp_secret") or ""))
+-        secret = {"password": secret["password"], **({"otp_secret": otp_secret} if otp_secret else {})}
+-        return secret, identifier_type, identifier
+-
+-    @staticmethod
+-    def id_for_key(key: str) -> str:
+-        """Stable, opaque handle for retrying a trusted save after a crash."""
+-        if not isinstance(key, str) or not key or len(key) > 256:
+-            raise VaultError('invalid idempotency key')
+-        return 'vault_' + uuid.uuid5(uuid.NAMESPACE_URL, 'hermes-vault:' + key).hex
+-
+-    def list_items(self) -> List[VaultItemMeta]:
+-        """Metadata-only listing. Secret payloads are never included."""
+-        with self._locked():
+-            return [self._meta(rec) for rec in self._read_all()]
+-
+-    def has_items(self) -> bool:
+-        try:
+-            with self._locked():
+-                return bool(self._read_all())
+-        except Exception:
+-            return False
+-
+-    def remove_item(self, item_id: str) -> bool:
+-        with self._locked():
+-            items = self._read_all()
+-            remaining = [rec for rec in items if rec.get("id") != item_id]
+-            if len(remaining) == len(items):
+-                return False
+-            self._write_all(remaining)
+-            return True
+-
+-    def get_meta(self, item_id: str) -> Optional[VaultItemMeta]:
+-        with self._locked():
+-            for rec in self._read_all():
+-                if rec.get("id") == item_id:
+-                    return self._meta(rec)
+-        return None
+-
+-    def resolve_secret(self, item_id: str) -> Dict[str, Any]:
+-        """Resolve the decrypted secret payload for server-side use ONLY.
+-
+-        Callers must never place the returned values into tool results,
+-        logs, exceptions, or any string that reaches the session DB.
+-        """
+-        with self._locked():
+-            for rec in self._read_all():
+-                if rec.get("id") == item_id:
+-                    return dict(rec.get("secret") or {})
+-        raise VaultError(f"no vault item with id {item_id!r}")
+-
+-    @staticmethod
+-    def _meta(rec: Dict[str, Any]) -> VaultItemMeta:
+-        identifier = rec.get("identifier")
+-        return VaultItemMeta(
+-            id=str(rec.get("id", "")),
+-            kind=str(rec.get("kind", "")),
+-            label=str(rec.get("label", "")),
+-            origin=rec.get("origin"),
+-            created_at=str(rec.get("created_at", "")),
+-            identifier_type=rec.get("identifier_type") if identifier else None,
+-            identifier=identifier or None,
+-            has_otp=bool((rec.get("secret") or {}).get("otp_secret")),
+-            login_method=rec.get("login_method", "password"),
+-        )
+-
+-
+-def get_vault_store() -> VaultStore:
+-    """Default profile-scoped vault store."""
+-    return VaultStore()
++"""Shared credential metadata and form helpers; local secret storage is removed."""
++
++from __future__ import annotations
++
++import re
++from dataclasses import dataclass
++from typing import Any, Dict, Optional
++from urllib.parse import urlsplit
++
++
++VAULT_KINDS = ("login", "api_key", "payment", "address")
++
++LOGIN_IDENTIFIER_TYPES = ("email", "phone", "username")
++
++# Canonical field names shared with browser form classification.
++PAYMENT_FIELDS = {
++    "card_number": "cc-number", "cardholder_name": "cc-name", "exp_month": "cc-exp-month",
++    "exp_year": "cc-exp-year", "cvc": "cc-csc", "billing_postal_code": "postal-code",
++}
++ADDRESS_FIELDS = {
++    "address_line1": "address-line1", "address_line2": "address-line2", "city": "address-level2",
++    "state": "address-level1", "postal_code": "postal-code", "country": "country-name",
++}
++REQUIRED_FIELDS = {"payment": ("card_number", "exp_month", "exp_year"),
++                   "address": ("address_line1", "city", "postal_code", "country")}
++
++_DEFAULT_PORTS = {"http": 80, "https": 443}
++
++class VaultError(Exception):
++    """Vault failure that is safe to surface (never contains secret values)."""
++
++
++_OTP_ALGOS = {"SHA1": "sha1", "SHA256": "sha256", "SHA512": "sha512"}
++
++
++def normalize_otp_secret(value: str) -> str:
++    """Accept a raw base32 seed or an ``otpauth://totp/...`` URI. Returns the canonical stored form:
++    the bare uppercase base32 seed, followed by ``|digits|period|algo`` ONLY when the URI departs from
++    the RFC 6238 defaults (6 / 30 / SHA1), so a plain seed stays a plain seed. Non-default parameters
++    are honoured, not dropped: an 8-digit or 60-second authenticator would otherwise get wrong codes."""
++    value = (value or "").strip()
++    if not value:
++        return ""
++    digits, period, algo = 6, 30, "SHA1"
++    if value.lower().startswith("otpauth://"):
++        from urllib.parse import parse_qs, urlparse
++        parsed = urlparse(value)
++        if parsed.netloc.lower() != "totp":
++            raise VaultError("only otpauth://totp links are supported (counter-based HOTP is not)")
++        qs = {k.lower(): v[0] for k, v in parse_qs(parsed.query).items()}
++        value = qs.get("secret", "")
++        try:
++            digits = int(qs.get("digits", digits))
++            period = int(qs.get("period", period))
++        except ValueError:
++            raise VaultError("otpauth:// digits/period must be integers")
++        algo = qs.get("algorithm", algo).upper().replace("-", "")
++        if digits not in (6, 7, 8) or period <= 0 or algo not in _OTP_ALGOS:
++            raise VaultError("unsupported otpauth:// parameters (digits 6-8, period > 0, SHA1/SHA256/SHA512)")
++    seed = re.sub(r"[\s-]", "", value).upper().rstrip("=")
++    if not seed or re.search(r"[^A-Z2-7]", seed):
++        raise VaultError("authenticator key must be a base32 secret or an otpauth:// URI")
++    if (digits, period, algo) == (6, 30, "SHA1"):
++        return seed
++    return f"{seed}|{digits}|{period}|{algo}"
++
++
++def totp_now(seed: str, *, digits: int = 6, period: int = 30, at: Optional[float] = None) -> str:
++    """RFC 6238 TOTP for a stored seed (see normalize_otp_secret for the ``seed|digits|period|algo``
++    form). Stdlib only."""
++    import base64
++    import hashlib
++    import hmac
++    import struct
++    import time as _time
++
++    algo = "sha1"
++    if "|" in seed:
++        seed, d, p, a = seed.split("|", 3)
++        digits, period, algo = int(d), int(p), _OTP_ALGOS.get(a.upper(), "sha1")
++    key = base64.b32decode(seed + "=" * (-len(seed) % 8), casefold=True)
++    counter = int((at if at is not None else _time.time()) // period)
++    digest = hmac.new(key, struct.pack(">Q", counter), getattr(hashlib, algo)).digest()
++    offset = digest[-1] & 0x0F
++    code = (struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % (10 ** digits)
++    return str(code).zfill(digits)
++
++
++def normalize_origin(url_or_origin: str) -> str:
++    """Normalize a URL or origin to ``scheme://host[:port]``.
++
++    Default ports (80 for http, 443 for https) are stripped so that
++    ``https://example.com`` and ``https://example.com:443`` compare equal.
++    Raises :class:`VaultError` for values without a scheme + host.
++    """
++    value = (url_or_origin or "").strip()
++    if not value:
++        raise VaultError("origin is required")
++    if "://" not in value:
++        raise VaultError(f"origin must include a scheme (got {value!r})")
++    parts = urlsplit(value)
++    scheme = (parts.scheme or "").lower()
++    host = (parts.hostname or "").lower()
++    if not scheme or not host:
++        raise VaultError(f"could not parse origin from {value!r}")
++    try:
++        port = parts.port
++    except ValueError as exc:
++        raise VaultError(f"invalid port in origin {value!r}") from exc
++    if port is None or port == _DEFAULT_PORTS.get(scheme):
++        return f"{scheme}://{host}"
++    return f"{scheme}://{host}:{port}"
++
++
++@dataclass(frozen=True)
++class VaultItemMeta:
++    """Metadata-only view of a vault item. Never contains secret values.
++
++    For password logins the identifier (email/username/phone) is metadata,
++    not a secret: the agent may see it and type it itself. Only the password
++    is vault-secret. SMS logins expose only a masked identifier; the number stays encrypted.
++    """
++
++    id: str
++    kind: str
++    label: str
++    origin: Optional[str]
++    created_at: str
++    identifier_type: Optional[str] = None
++    identifier: Optional[str] = None
++    has_otp: bool = False  # a TOTP seed is stored: 2FA codes can be minted without asking the user
++    # Every origin the password manager bound to this item (manager backends only;
++    # ``origin`` is the first/primary one). Fill matching stays exact-origin against
++    # this list — no wildcard or subdomain inference is ever derived from it.
++    allowed_origins: tuple = ()
++    login_method: str = "password"
++
++    def to_dict(self) -> Dict[str, Any]:
++        out = {
++            "id": self.id,
++            "kind": self.kind,
++            "label": self.label,
++            "origin": self.origin,
++            "created_at": self.created_at,
++        }
++        if self.identifier is not None:
++            out["identifier"] = self.identifier
++            out["identifier_type"] = self.identifier_type
++        if self.has_otp:
++            out["has_otp"] = True
++        if self.kind == "login" and self.login_method == "sms":
++            out["login_method"] = "sms"
++        if len(self.allowed_origins) > 1:
++            out["allowed_origins"] = list(self.allowed_origins)
++        return out
++
++
++class VaultStore:
++    """Reject stale local-store calls before reading or creating any files."""
++
++    def __init__(self, base_dir=None):
++        raise VaultError("Local credential storage has been removed. Use Kernel Vault.")
++
++    def resolve_secret(self, handle):
++        raise VaultError("Local credential storage has been removed. Use Kernel Vault.")
++
++
++def get_vault_store():
++    raise VaultError("Local credential storage has been removed. Use Kernel Vault.")
+ 
+ 
+ def scrub_secret_from_text(text: str, secret: Dict[str, Any]) -> str:
+diff --git a/hermes/agent/vault_backends/base.py b/hermes/agent/vault_backends/base.py
+--- a/hermes/agent/vault_backends/base.py
++++ b/hermes/agent/vault_backends/base.py
+@@ -26,108 +26,106 @@
+ 
+ 
+ class LoginBackend(ABC):
+-    name: str                # config key: local | onepassword | bitwarden
+-    display_name: str        # user-facing
+-    prefix: str              # handle prefix ("vault_", "op:", "bw:")
+-    needs_unlock: bool = False
+-
+-    def owns(self, handle: str) -> bool:
+-        return handle.startswith(self.prefix)
+-
+-    def is_unlocked(self) -> bool:
+-        return True
+-
+-    @abstractmethod
+-    def list_items(self) -> List[VaultItemMeta]:
+-        """Metadata only. Locked external backends return [] (the agent sees a lock hint instead)."""
+-
+-    @abstractmethod
+-    def get_meta(self, handle: str) -> Optional[VaultItemMeta]: ...
+-
+-    @abstractmethod
+-    def resolve_password(self, handle: str) -> str:
+-        """Server-side only; raises ``UnlockRequired`` when locked."""
+-
+-    def resolve_otp(self, handle: str) -> Optional[str]:
+-        """Current one-time code for a login that stores a TOTP seed, else None (the user is asked).
+-        Server-side only, like resolve_password."""
+-        return None
+-
+-    def resolve_secret(self, handle: str) -> Dict[str, str]:
+-        """Full payload of a payment/address item (server-side only). External managers list only
+-        logins, so the base returns the password-only shape."""
+-        return {"password": self.resolve_password(handle)}
+-
+-
+-def run_with_stdin_secret(argv: Sequence[str], *, env: Dict[str, str], secret: str, timeout: float,
+-                          label: str) -> subprocess.CompletedProcess:
+-    """Run a manager CLI feeding *secret* on stdin (never argv, never env). Spawn/timeout → RuntimeError."""
+-    try:
+-        return subprocess.run(  # noqa: S603 — argv list, no shell
+-            list(argv), env=env, input=secret + "\n", capture_output=True, text=True,
+-            encoding="utf-8", errors="replace", timeout=timeout)
+-    except subprocess.TimeoutExpired as exc:
+-        raise RuntimeError(f"{label} unlock timed out after {timeout:.0f}s") from exc
+-    except OSError as exc:
+-        raise RuntimeError(f"failed to invoke {label}: {exc}") from exc
+-
+-
+-def run_with_secret_env(argv: Sequence[str], *, env: Dict[str, str], secret_env: str, secret: str, timeout: float,
+-                        label: str) -> subprocess.CompletedProcess:
+-    """Run a manager CLI whose non-interactive contract reads the secret from a named env var.
+-    The variable is set on the child's environment only (never argv, never our process)."""
+-    child_env = dict(env)
+-    child_env[secret_env] = secret
+-    try:
+-        return subprocess.run(  # noqa: S603 — argv list, no shell
+-            list(argv), env=child_env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+-            encoding="utf-8", errors="replace", timeout=timeout)
+-    except subprocess.TimeoutExpired as exc:
+-        raise RuntimeError(f"{label} unlock timed out after {timeout:.0f}s") from exc
+-    except OSError as exc:
+-        raise RuntimeError(f"failed to invoke {label}: {exc}") from exc
+-
+-
+-def _cfg() -> Dict:
+-    from hermes_cli.config import load_config_readonly
+-    cfg = load_config_readonly().get("vault") or {}
+-    return cfg if isinstance(cfg, dict) else {}
+-
+-
+-def external_backend_classes():
+-    from agent.vault_backends.bitwarden import BitwardenLoginBackend
+-    from agent.vault_backends.onepassword import OnePasswordLoginBackend
+-    return (OnePasswordLoginBackend, BitwardenLoginBackend)
+-
+-
+-def is_installed(name: str) -> bool:
+-    """Is the manager CLI reachable — honouring a configured ``binary_path`` over PATH."""
+-    import shutil
+-    section = _cfg().get(name) or {}
+-    explicit = str(section.get("binary_path") or "") if isinstance(section, dict) else ""
+-    if explicit:
+-        return Path(explicit).is_file()
+-    if name == "onepassword":
+-        from agent.secret_sources.onepassword import find_op
+-        return find_op() is not None
+-    return shutil.which("bw") is not None
+-
+-
+-def is_enabled(name: str) -> bool:
+-    """An installed manager is a login source unless the user opted out (``vault.<name>.enabled: false``).
+-    Zero-config on purpose: a user with ``bw``/``op`` on PATH should never have to discover a toggle."""
+-    section = _cfg().get(name) or {}
+-    if isinstance(section, dict) and section.get("enabled") is False:
+-        return False
+-    return is_installed(name)
+-
+-
+-def enabled_backends() -> List[LoginBackend]:
+-    """Local first (always on), then every detected external manager the user has not turned off."""
+-    from agent.vault_backends.local import LocalLoginBackend
+-
+-    cfg = _cfg()
+-    out: List[LoginBackend] = [LocalLoginBackend()]
++    name: str                # config key: onepassword | bitwarden
++    display_name: str        # user-facing
++    prefix: str              # handle prefix ("op:", "bw:")
++    needs_unlock: bool = False
++
++    def owns(self, handle: str) -> bool:
++        return handle.startswith(self.prefix)
++
++    def is_unlocked(self) -> bool:
++        return True
++
++    @abstractmethod
++    def list_items(self) -> List[VaultItemMeta]:
++        """Metadata only. Locked external backends return [] (the agent sees a lock hint instead)."""
++
++    @abstractmethod
++    def get_meta(self, handle: str) -> Optional[VaultItemMeta]: ...
++
++    @abstractmethod
++    def resolve_password(self, handle: str) -> str:
++        """Server-side only; raises ``UnlockRequired`` when locked."""
++
++    def resolve_otp(self, handle: str) -> Optional[str]:
++        """Current one-time code for a login that stores a TOTP seed, else None (the user is asked).
++        Server-side only, like resolve_password."""
++        return None
++
++    def resolve_secret(self, handle: str) -> Dict[str, str]:
++        """Full payload of a payment/address item (server-side only). External managers list only
++        logins, so the base returns the password-only shape."""
++        return {"password": self.resolve_password(handle)}
++
++
++def run_with_stdin_secret(argv: Sequence[str], *, env: Dict[str, str], secret: str, timeout: float,
++                          label: str) -> subprocess.CompletedProcess:
++    """Run a manager CLI feeding *secret* on stdin (never argv, never env). Spawn/timeout → RuntimeError."""
++    try:
++        return subprocess.run(  # noqa: S603 — argv list, no shell
++            list(argv), env=env, input=secret + "\n", capture_output=True, text=True,
++            encoding="utf-8", errors="replace", timeout=timeout)
++    except subprocess.TimeoutExpired as exc:
++        raise RuntimeError(f"{label} unlock timed out after {timeout:.0f}s") from exc
++    except OSError as exc:
++        raise RuntimeError(f"failed to invoke {label}: {exc}") from exc
++
++
++def run_with_secret_env(argv: Sequence[str], *, env: Dict[str, str], secret_env: str, secret: str, timeout: float,
++                        label: str) -> subprocess.CompletedProcess:
++    """Run a manager CLI whose non-interactive contract reads the secret from a named env var.
++    The variable is set on the child's environment only (never argv, never our process)."""
++    child_env = dict(env)
++    child_env[secret_env] = secret
++    try:
++        return subprocess.run(  # noqa: S603 — argv list, no shell
++            list(argv), env=child_env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
++            encoding="utf-8", errors="replace", timeout=timeout)
++    except subprocess.TimeoutExpired as exc:
++        raise RuntimeError(f"{label} unlock timed out after {timeout:.0f}s") from exc
++    except OSError as exc:
++        raise RuntimeError(f"failed to invoke {label}: {exc}") from exc
++
++
++def _cfg() -> Dict:
++    from hermes_cli.config import load_config_readonly
++    cfg = load_config_readonly().get("vault") or {}
++    return cfg if isinstance(cfg, dict) else {}
++
++
++def external_backend_classes():
++    from agent.vault_backends.bitwarden import BitwardenLoginBackend
++    from agent.vault_backends.onepassword import OnePasswordLoginBackend
++    return (OnePasswordLoginBackend, BitwardenLoginBackend)
++
++
++def is_installed(name: str) -> bool:
++    """Is the manager CLI reachable — honouring a configured ``binary_path`` over PATH."""
++    import shutil
++    section = _cfg().get(name) or {}
++    explicit = str(section.get("binary_path") or "") if isinstance(section, dict) else ""
++    if explicit:
++        return Path(explicit).is_file()
++    if name == "onepassword":
++        from agent.secret_sources.onepassword import find_op
++        return find_op() is not None
++    return shutil.which("bw") is not None
++
++
++def is_enabled(name: str) -> bool:
++    """An installed manager is a login source unless the user opted out (``vault.<name>.enabled: false``).
++    Zero-config on purpose: a user with ``bw``/``op`` on PATH should never have to discover a toggle."""
++    section = _cfg().get(name) or {}
++    if isinstance(section, dict) and section.get("enabled") is False:
++        return False
++    return is_installed(name)
++
++
++def enabled_backends() -> List[LoginBackend]:
++    """Detected external managers only; local credential storage is removed."""
++    cfg = _cfg()
++    out: List[LoginBackend] = []
+     for cls in external_backend_classes():
+         if is_enabled(cls.name):
+             section = cfg.get(cls.name) or {}
+diff --git a/hermes/agent/vault_backends/__init__.py b/hermes/agent/vault_backends/__init__.py
+--- a/hermes/agent/vault_backends/__init__.py
++++ b/hermes/agent/vault_backends/__init__.py
+@@ -1,17 +1,4 @@
+-"""Login backends for the browser credential vault.
+-
+-The local Fernet store (``agent/vault_store.py``) is one backend; 1Password
+-(``op``) and Bitwarden Password Manager (``bw``) are the others. Every backend
+-hands the agent the same shape — opaque handle + login metadata — and resolves
+-the password server-side at fill time only. Handles are namespaced by backend
+-(``vault_…`` local, ``op:…``, ``bw:…``) so the browser tools need no schema
+-change to route to the right one.
+-
+-External managers are locked until the user unlocks them for the current
+-session (``agent/vault_backends/unlock.py``); the master password is typed
+-into a masked prompt owned by the surface (CLI panel, Desktop dialog) and is
+-never a tool argument, never argv, never persisted.
+-"""
++"""External password-manager adapters. Local credential storage is removed."""
+ 
+ from agent.vault_backends.base import LoginBackend, UnlockRequired, backend_for_handle, enabled_backends
+ 
+diff --git a/hermes/agent/vault_backends/local.py b/hermes/agent/vault_backends/local.py
+deleted file mode 100644
+--- a/hermes/agent/vault_backends/local.py
++++ /dev/null
+@@ -1,38 +0,0 @@
+-"""Local Fernet vault as a login backend (the always-on default)."""
+-
+-from __future__ import annotations
+-
+-from typing import Dict, List, Optional
+-
+-from agent.vault_backends.base import LoginBackend
+-from agent.vault_store import VaultItemMeta
+-
+-
+-def _store():
+-    # Late import: tests and callers patch ``agent.vault_store.get_vault_store``; binding it here
+-    # at call time keeps that facade name the single seam.
+-    from agent.vault_store import get_vault_store
+-    return get_vault_store()
+-
+-
+-class LocalLoginBackend(LoginBackend):
+-    name = "local"
+-    display_name = "Hermes vault"
+-    prefix = "vault_"
+-
+-    def list_items(self) -> List[VaultItemMeta]:
+-        return _store().list_items()
+-
+-    def get_meta(self, handle: str) -> Optional[VaultItemMeta]:
+-        return _store().get_meta(handle)
+-
+-    def resolve_password(self, handle: str) -> str:
+-        return str(_store().resolve_secret(handle).get("password") or "")
+-
+-    def resolve_otp(self, handle: str) -> Optional[str]:
+-        from agent.vault_store import totp_now
+-        seed = str(_store().resolve_secret(handle).get("otp_secret") or "")
+-        return totp_now(seed) if seed else None
+-
+-    def resolve_secret(self, handle: str) -> Dict[str, str]:
+-        return {k: str(v) for k, v in _store().resolve_secret(handle).items()}
+diff --git a/hermes/hermes_cli/vault.py b/hermes/hermes_cli/vault.py
+--- a/hermes/hermes_cli/vault.py
++++ b/hermes/hermes_cli/vault.py
+@@ -1,205 +1,106 @@
+-"""``hermes vault`` — manage the local encrypted autofill vault.
+-
+-Subcommands:
+-- ``hermes vault add``   interactive wizard; the password is read via
+-  getpass (never echoed, never accepted as argv). The login identifier is
+-  visible metadata and prompted normally.
+-- ``hermes vault list``  metadata — labels, kinds, identifiers, origins,
+-  handles. Passwords are never shown.
+-- ``hermes vault rm``    remove an item by handle/id.
+-
+-The vault backs the password-blind browser autofill tools
+-(``browser_vault_list`` / ``browser_vault_fill``): the agent sees handles
+-and login identifiers, types the identifier itself, and fills the password
+-server-side without ever seeing it.
+-"""
+-
+-from __future__ import annotations
+-
+-import getpass
+-
+-
+-def _console():
+-    from rich.console import Console
+-
+-    return Console()
+-
+-
+-def _cmd_add(args) -> None:
+-    from agent.vault_store import (
+-        LOGIN_IDENTIFIER_TYPES,
+-        VAULT_KINDS,
+-        VaultError,
+-        get_vault_store,
+-    )
+-
+-    c = _console()
+-    c.print(
+-        "[bold]Add a vault item[/] (the password is encrypted at rest and the "
+-        "agent never sees it; the identifier is visible metadata the agent "
+-        "can type itself)"
+-    )
+-
+-    kind = (args.kind or "").strip().lower()
+-    while kind not in VAULT_KINDS:
+-        kind = input(f"Kind ({'/'.join(VAULT_KINDS)}) [login]: ").strip().lower() or "login"
+-        if kind not in VAULT_KINDS:
+-            c.print(f"[red]Unknown kind {kind!r}[/]")
+-            kind = ""
+-
+-    label = ""
+-    while not label:
+-        label = input("Label (e.g. 'GitHub work account'): ").strip()
+-
+-    try:
+-        if kind == "login":
+-            origin = ""
+-            while not origin:
+-                origin = input("Site origin (e.g. https://github.com): ").strip()
+-            id_type = ""
+-            while id_type not in LOGIN_IDENTIFIER_TYPES:
+-                id_type = (
+-                    input(f"Identifier type ({'/'.join(LOGIN_IDENTIFIER_TYPES)}) [email]: ")
+-                    .strip()
+-                    .lower()
+-                    or "email"
+-                )
+-            identifier = ""
+-            while not identifier:
+-                identifier = input(f"{id_type.capitalize()}: ").strip()
+-            password = ""
+-            while not password:
+-                password = getpass.getpass("Password (hidden): ")
+-            otp_secret = getpass.getpass(
+-                "Authenticator key (optional, hidden; the 2FA \"setup key\" or otpauth:// link — Enter to skip): ")
+-            # identifier_type/identifier are stored as metadata (not secret);
+-            # add_item moves them out of the encrypted payload.
+-            secret = {
+-                "identifier_type": id_type,
+-                "identifier": identifier,
+-                "password": password,
+-                **({"otp_secret": otp_secret} if otp_secret.strip() else {}),
+-            }
+-            meta = get_vault_store().add_item(
+-                kind="login", label=label, secret=secret, origin=origin
+-            )
+-        else:
+-            from agent.vault_store import ADDRESS_FIELDS, PAYMENT_FIELDS, REQUIRED_FIELDS
+-
+-            fields = PAYMENT_FIELDS if kind == "payment" else ADDRESS_FIELDS
+-            origin = ""
+-            while not origin:
+-                origin = input("Site origin the item may be filled on (e.g. https://shop.example.com): ").strip()
+-            c.print(f"[dim]{kind} fields are filled only on that origin; card values are read hidden.[/]")
+-            secret = {}
+-            for field in fields:
+-                required = field in REQUIRED_FIELDS[kind]
+-                prompt = f"{field.replace('_', ' ')}{'' if required else ' (optional)'}: "
+-                read = getpass.getpass if kind == "payment" else input
+-                value = read(prompt).strip()
+-                while required and not value:
+-                    value = read(prompt).strip()
+-                if value:
+-                    secret[field] = value
+-            meta = get_vault_store().add_item(kind=kind, label=label, secret=secret, origin=origin)
+-    except VaultError as exc:
+-        c.print(f"[red]Error:[/] {exc}")
+-        return
+-
+-    c.print(f"[green]Stored.[/] handle=[bold]{meta.id}[/] kind={meta.kind} origin={meta.origin or '-'}")
+-
+-
+-def _cmd_list(args) -> None:
+-    """Local items always; external managers only for the lifetime of this CLI process (a
+-    `hermes vault list` unlock does not carry into a chat session — unlock there when asked)."""
+-    from agent.vault_backends import enabled_backends
+-
+-    c = _console()
+-    rows, locked = [], []
+-    for backend in enabled_backends():
+-        if backend.needs_unlock and not backend.is_unlocked():
+-            locked.append(backend.display_name)
+-            continue
+-        rows.extend((backend.display_name, meta) for meta in backend.list_items())
+-    if not rows and not locked:
+-        c.print("[dim]Vault is empty. Add an item with `hermes vault add`.[/]")
+-        return
+-    if rows:
+-        from rich.table import Table
+-
+-        table = Table(title=f"Vault items ({len(rows)})")
+-        for col in ("Handle", "Source", "Kind", "Label", "Identifier", "Origin"):
+-            table.add_column(col, style="bold" if col == "Handle" else None)
+-        for source, meta in rows:
+-            table.add_row(meta.id, source, meta.kind, meta.label, meta.identifier or "-", meta.origin or "-")
+-        c.print(table)
+-        c.print("[dim]Passwords are never shown; the agent fills them server-side from the handle.[/]")
+-    for name in locked:
+-        c.print(f"[yellow]{name}[/] is enabled but locked — the agent will ask you to unlock it when it needs a login.")
+-
+-
+-def _cmd_sources(args) -> None:
+-    """Show the detected password managers; `--disable`/`--enable` flip the opt-out (`vault.<name>.enabled`)."""
+-    from agent.vault_backends import enabled_backends
+-    from agent.vault_backends.base import external_backend_classes, is_installed
+-    from hermes_cli.config import _ensure_dict, load_config, save_config
+-
+-    c = _console()
+-    classes = {cls.name: cls for cls in external_backend_classes()}
+-    if args.enable or args.disable:
+-        name = args.enable or args.disable
+-        if name not in classes:
+-            c.print(f"[red]Unknown password manager {name!r}[/] (expected one of {', '.join(classes)})")
+-            return
+-        cfg = load_config()
+-        section = _ensure_dict(_ensure_dict(cfg, "vault"), name)
+-        if args.enable:
+-            section.pop("enabled", None)  # detected managers are on by default; drop the opt-out
+-        else:
+-            section["enabled"] = False
+-        save_config(cfg)
+-        c.print(f"[green]{classes[name].display_name} {'on' if args.enable else 'off'}[/] for browser logins.")
+-        return
+-    enabled = {b.name for b in enabled_backends()}
+-    for name, cls in classes.items():
+-        if name in enabled:
+-            status = "[green]detected[/] · the agent asks you to unlock it when it needs a login"
+-        elif is_installed(name):
+-            status = "[dim]turned off[/] (`hermes vault sources --enable {name}` to use it)".format(name=name)
+-        else:
+-            status = "[dim]not installed[/]"
+-        c.print(f"  {cls.display_name:<10} {status}")
+-    c.print("[dim]Managers are picked up automatically when their CLI is installed and signed in.[/]")
+-
+-
+-def _cmd_rm(args) -> None:
+-    from agent.vault_store import get_vault_store
+-
+-    c = _console()
+-    if get_vault_store().remove_item(args.handle):
+-        c.print(f"[green]Removed[/] {args.handle}")
+-    else:
+-        c.print(f"[red]No vault item with handle {args.handle!r}[/]")
+-
+-
+-def register_cli(subparser) -> None:
+-    """Build the ``hermes vault`` argparse tree (called from main.py)."""
+-    subs = subparser.add_subparsers(dest="vault_action")
+-
+-    p_add = subs.add_parser(
+-        "add",
+-        help="Save a login, card or address ahead of time (optional: the agent asks you on the page when it needs one)",
+-    )
+-    p_add.add_argument(
+-        "--kind", choices=["login", "payment", "address"], default=None,
+-        help="Item kind (interactive prompt when omitted)",
+-    )
+-    p_add.set_defaults(_vault_handler=_cmd_add)
+-
+-    p_list = subs.add_parser("list", help="List vault items (metadata only, never values)")
+-    p_list.set_defaults(_vault_handler=_cmd_list)
+-
+-    p_rm = subs.add_parser("rm", help="Remove a vault item by handle")
++"""External manager metadata commands; local credential collection is removed."""
++
++from __future__ import annotations
++
++
++
++def _console():
++    from rich.console import Console
++
++    return Console()
++
++
++def _cmd_add(args) -> None:
++    from agent.vault_store import VaultError
++    raise VaultError("Local credential storage has been removed. Ask Clanker for a private Kernel Vault form.")
++
++
++def _cmd_list(args) -> None:
++    """External managers only for the lifetime of this CLI process (a
++    `hermes vault list` unlock does not carry into a chat session — unlock there when asked)."""
++    from agent.vault_backends import enabled_backends
++
++    c = _console()
++    rows, locked = [], []
++    for backend in enabled_backends():
++        if backend.needs_unlock and not backend.is_unlocked():
++            locked.append(backend.display_name)
++            continue
++        rows.extend((backend.display_name, meta) for meta in backend.list_items())
++    if not rows and not locked:
++        c.print("[dim]No external manager accounts are available. Ask Clanker for a private Kernel Vault form.[/]")
++        return
++    if rows:
++        from rich.table import Table
++
++        table = Table(title=f"Vault items ({len(rows)})")
++        for col in ("Handle", "Source", "Kind", "Label", "Identifier", "Origin"):
++            table.add_column(col, style="bold" if col == "Handle" else None)
++        for source, meta in rows:
++            table.add_row(meta.id, source, meta.kind, meta.label, meta.identifier or "-", meta.origin or "-")
++        c.print(table)
++        c.print("[dim]Passwords are never shown; the agent fills them server-side from the handle.[/]")
++    for name in locked:
++        c.print(f"[yellow]{name}[/] is enabled but locked — the agent will ask you to unlock it when it needs a login.")
++
++
++def _cmd_sources(args) -> None:
++    """Show the detected password managers; `--disable`/`--enable` flip the opt-out (`vault.<name>.enabled`)."""
++    from agent.vault_backends import enabled_backends
++    from agent.vault_backends.base import external_backend_classes, is_installed
++    from hermes_cli.config import _ensure_dict, load_config, save_config
++
++    c = _console()
++    classes = {cls.name: cls for cls in external_backend_classes()}
++    if args.enable or args.disable:
++        name = args.enable or args.disable
++        if name not in classes:
++            c.print(f"[red]Unknown password manager {name!r}[/] (expected one of {', '.join(classes)})")
++            return
++        cfg = load_config()
++        section = _ensure_dict(_ensure_dict(cfg, "vault"), name)
++        if args.enable:
++            section.pop("enabled", None)  # detected managers are on by default; drop the opt-out
++        else:
++            section["enabled"] = False
++        save_config(cfg)
++        c.print(f"[green]{classes[name].display_name} {'on' if args.enable else 'off'}[/] for browser logins.")
++        return
++    enabled = {b.name for b in enabled_backends()}
++    for name, cls in classes.items():
++        if name in enabled:
++            status = "[green]detected[/] · the agent asks you to unlock it when it needs a login"
++        elif is_installed(name):
++            status = "[dim]turned off[/] (`hermes vault sources --enable {name}` to use it)".format(name=name)
++        else:
++            status = "[dim]not installed[/]"
++        c.print(f"  {cls.display_name:<10} {status}")
++    c.print("[dim]Managers are picked up automatically when their CLI is installed and signed in.[/]")
++
++
++def _cmd_rm(args) -> None:
++    from agent.vault_store import VaultError
++    raise VaultError("Local credential storage has been removed. Manage connected accounts through Clanker.")
++
++
++def register_cli(subparser) -> None:
++    """Build the ``hermes vault`` argparse tree (called from main.py)."""
++    subs = subparser.add_subparsers(dest="vault_action")
++
++    p_add = subs.add_parser(
++        "add",
++        help="Retired: request a private Kernel Vault form from Clanker",
++    )
++    p_add.add_argument(
++        "--kind", choices=["login", "payment", "address"], default=None,
++        help="Item kind (interactive prompt when omitted)",
++    )
++    p_add.set_defaults(_vault_handler=_cmd_add)
++
++    p_list = subs.add_parser("list", help="List vault items (metadata only, never values)")
++    p_list.set_defaults(_vault_handler=_cmd_list)
++
++    p_rm = subs.add_parser("rm", help="Retired: manage connected accounts through Clanker")
+     p_rm.add_argument("handle", help="Item handle (see `hermes vault list`)")
+     p_rm.set_defaults(_vault_handler=_cmd_rm)
+ 
+diff --git a/hermes/tui_gateway/methods_vault.py b/hermes/tui_gateway/methods_vault.py
+--- a/hermes/tui_gateway/methods_vault.py
++++ b/hermes/tui_gateway/methods_vault.py
+@@ -1,183 +1,123 @@
+-"""Credential-vault JSON-RPC handlers — the Desktop's door to the local vault.
+-
+-The Desktop's Settings → Credential Vault panel manages the encrypted,
+-model-blind vault (``agent/vault_store.py``) over the same localhost WS
+-JSON-RPC channel every other Settings surface uses. Contracts:
+-
+-- ``vault.list``   → metadata only ({id, kind, label, origin, created_at,
+-  and for logins identifier/identifier_type — identifiers are visible
+-  metadata by design}); passwords NEVER appear in any response.
+-- ``vault.add``    → validates via ``VaultStore.add_item``; the secret
+-  payload arrives over the local RPC channel, goes straight into the
+-  encrypted store, and is never logged. Error strings are defensively
+-  scrubbed with ``scrub_secret_from_text`` before they leave the handler.
+-- ``vault.remove`` → {removed: bool}.
+-- ``vault.sources`` / ``vault.source.set`` → external password-manager status and enable toggle.
+-- ``vault.unlock`` / ``vault.lock`` → per-session unlock of a manager from Settings; the master
+-  password is consumed by the manager CLI through its non-interactive channel and never stored
+-  or logged.
+-
+-Every handler honours ``params.profile`` (app-global remote mode serves several profiles from one
+-backend): the requested profile's HERMES_HOME and secret scope are bound around the body, so the
+-vault file, manager config and manager tokens all resolve to that profile.
+-
+-Handlers are rebound onto server.py's globals at install time (see
+-method_ctx.py) and may reference server module globals (``_ok``, ``_err``).
+-"""
+-
+-from .method_ctx import HandlerRegistry
+-
+-_registry = HandlerRegistry()
+-method = _registry.method
+-# server.py's ``@_profile_scoped`` (applied at install): the one scoping path every RPC uses, so the
+-# launch profile (no ``params.profile``) keeps its secret scope bound once the process multiplexes
+-# instead of its manager-token reads raising ``UnscopedSecretError``.
+-_profile_scoped = _registry.profile_scoped
+-
+-# JSON-RPC error code 5095 = vault failure (validation + store errors).
+-# Kept as a literal inside handler bodies: handlers are rebound onto
+-# server.py's globals, so module-level constants are not reachable there.
+-
+-
+-@method("vault.list")
+-@_profile_scoped
+-def _(rid, params: dict) -> dict:
+-    """Metadata-only listing across every enabled backend (local + unlocked password managers).
+-    Each item carries ``backend``; locked managers contribute nothing (see vault.sources)."""
+-    try:
+-        from agent.vault_backends import enabled_backends
+-
+-        items = []
+-        for backend in enabled_backends():
+-            if backend.needs_unlock and not backend.is_unlocked():
+-                continue
+-            items.extend({**meta.to_dict(), "backend": backend.name} for meta in backend.list_items())
+-        return _ok(rid, {"items": items})
+-    except Exception as e:
+-        return _err(rid, 5095, str(e))
+-
+-
+-@method("vault.sources")
+-@_profile_scoped
+-def _(rid, params: dict) -> dict:
+-    """Status of every login source: {name, display_name, enabled, needs_unlock, unlocked, installed}."""
+-    from agent.vault_backends import enabled_backends
+-    from agent.vault_backends.base import external_backend_classes, is_installed
+-
+-    enabled = {b.name: b for b in enabled_backends()}
+-    rows = [{"name": "local", "display_name": "Hermes vault", "enabled": True, "needs_unlock": False,
+-             "unlocked": True, "installed": True}]
+-    for cls in external_backend_classes():
+-        live = enabled.get(cls.name)
+-        rows.append({"name": cls.name, "display_name": cls.display_name, "enabled": live is not None,
+-                     "needs_unlock": True, "unlocked": bool(live and live.is_unlocked()),
+-                     "installed": is_installed(cls.name)})
+-    return _ok(rid, {"sources": rows})
+-
+-
+-@method("vault.source.set")
+-@_profile_scoped
+-def _(rid, params: dict) -> dict:
+-    """Enable/disable an external manager: writes ``vault.<name>.enabled`` and locks it when disabling."""
+-    from agent.vault_backends.base import external_backend_classes
+-    from agent.vault_backends.unlock import lock
+-    from hermes_cli.config import _ensure_dict, load_config, save_config
+-
+-    name = str(params.get("name") or "")
+-    if name not in {cls.name for cls in external_backend_classes()}:
+-        return _err(rid, 5095, f"unknown vault source: {name}")
+-    enabled = bool(params.get("enabled"))
+-    cfg = load_config()
+-    section = _ensure_dict(_ensure_dict(cfg, "vault"), name)
+-    if enabled:
+-        section.pop("enabled", None)  # detected managers are on by default; this removes the opt-out
+-    else:
+-        section["enabled"] = False
+-    if not enabled:
+-        lock(name)
+-    save_config(cfg)
+-    return _ok(rid, {"name": name, "enabled": enabled})
+-
+-
+-@method("vault.unlock")
+-@_profile_scoped
+-def _(rid, params: dict) -> dict:
+-    """Unlock a manager with the master password typed in the Settings dialog (consumed by the CLI on stdin)."""
+-    from agent.vault_backends import enabled_backends
+-
+-    name = str(params.get("name") or "")
+-    password = str(params.get("password") or "")
+-    backend = next((b for b in enabled_backends() if b.name == name and b.needs_unlock), None)
+-    if backend is None:
+-        return _err(rid, 5095, f"{name} is not an enabled password manager")
+-    if not password:
+-        return _err(rid, 5095, "master password is required")
+-    try:
+-        backend.unlock(password)  # type: ignore[attr-defined]
+-    except Exception as e:
+-        return _err(rid, 5095, str(e).replace(password, "[REDACTED]"))
+-    finally:
+-        del password
+-    return _ok(rid, {"name": name, "unlocked": True})
+-
+-
+-@method("vault.lock")
+-@_profile_scoped
+-def _(rid, params: dict) -> dict:
+-    """Forget a manager's session token (or every one when ``name`` is omitted)."""
+-    from agent.vault_backends.unlock import lock
+-
+-    name = params.get("name")
+-    lock(str(name) if name else None)
+-    return _ok(rid, {"locked": True})
+-
+-
+-@method("vault.add")
+-@_profile_scoped
+-def _(rid, params: dict) -> dict:
+-    """Add a vault item. ``secret`` values go straight into the encrypted store.
+-
+-    Params: ``kind`` (login|payment|address), ``label``, ``origin?``,
+-    ``secret`` (dict). Result: ``{id}`` — metadata only. Exception text is
+-    scrubbed of secret values before it can reach a response or a log line.
+-    """
+-    from agent.vault_store import (
+-        VaultError,
+-        get_vault_store,
+-        scrub_secret_from_text,
+-    )
+-
+-    secret = params.get("secret")
+-    if not isinstance(secret, dict) or not secret:
+-        return _err(rid, 5095, "secret payload is required")
+-    try:
+-        meta = get_vault_store().add_item(
+-            kind=str(params.get("kind") or ""),
+-            label=str(params.get("label") or ""),
+-            origin=(str(params.get("origin")) if params.get("origin") else None),
+-            secret=secret,
+-        )
+-        return _ok(rid, {"id": meta.id})
+-    except VaultError as e:
+-        # VaultError messages are metadata-safe by contract, but scrub anyway.
+-        return _err(rid, 5095, scrub_secret_from_text(str(e), secret))
+-    except Exception as e:
+-        return _err(rid, 5095, scrub_secret_from_text(str(e), secret))
+-
+-
+-@method("vault.remove")
+-@_profile_scoped
+-def _(rid, params: dict) -> dict:
+-    """Remove a vault item by id. Result: ``{removed: bool}``."""
+-    try:
+-        from agent.vault_store import get_vault_store
+-
+-        item_id = str(params.get("id") or "")
+-        if not item_id:
+-            return _err(rid, 5095, "id is required")
+-        return _ok(rid, {"removed": get_vault_store().remove_item(item_id)})
+-    except Exception as e:
+-        return _err(rid, 5095, str(e))
++"""External manager RPCs; retired local credential routes refuse without I/O."""
++
++from .method_ctx import HandlerRegistry
++
++_registry = HandlerRegistry()
++method = _registry.method
++# server.py's ``@_profile_scoped`` (applied at install): the one scoping path every RPC uses, so the
++# launch profile (no ``params.profile``) keeps its secret scope bound once the process multiplexes
++# instead of its manager-token reads raising ``UnscopedSecretError``.
++_profile_scoped = _registry.profile_scoped
++
++# JSON-RPC error code 5095 = vault failure (validation + store errors).
++# Kept as a literal inside handler bodies: handlers are rebound onto
++# server.py's globals, so module-level constants are not reachable there.
++
++
++@method("vault.list")
++@_profile_scoped
++def _(rid, params: dict) -> dict:
++    """Metadata-only listing across enabled external password managers.
++    Each item carries ``backend``; locked managers contribute nothing (see vault.sources)."""
++    try:
++        from agent.vault_backends import enabled_backends
++
++        items = []
++        for backend in enabled_backends():
++            if backend.needs_unlock and not backend.is_unlocked():
++                continue
++            items.extend({**meta.to_dict(), "backend": backend.name} for meta in backend.list_items())
++        return _ok(rid, {"items": items})
++    except Exception as e:
++        return _err(rid, 5095, str(e))
++
++
++@method("vault.sources")
++@_profile_scoped
++def _(rid, params: dict) -> dict:
++    """Status of every login source: {name, display_name, enabled, needs_unlock, unlocked, installed}."""
++    from agent.vault_backends import enabled_backends
++    from agent.vault_backends.base import external_backend_classes, is_installed
++
++    enabled = {b.name: b for b in enabled_backends()}
++    rows = []
++    for cls in external_backend_classes():
++        live = enabled.get(cls.name)
++        rows.append({"name": cls.name, "display_name": cls.display_name, "enabled": live is not None,
++                     "needs_unlock": True, "unlocked": bool(live and live.is_unlocked()),
++                     "installed": is_installed(cls.name)})
++    return _ok(rid, {"sources": rows})
++
++
++@method("vault.source.set")
++@_profile_scoped
++def _(rid, params: dict) -> dict:
++    """Enable/disable an external manager: writes ``vault.<name>.enabled`` and locks it when disabling."""
++    from agent.vault_backends.base import external_backend_classes
++    from agent.vault_backends.unlock import lock
++    from hermes_cli.config import _ensure_dict, load_config, save_config
++
++    name = str(params.get("name") or "")
++    if name not in {cls.name for cls in external_backend_classes()}:
++        return _err(rid, 5095, f"unknown vault source: {name}")
++    enabled = bool(params.get("enabled"))
++    cfg = load_config()
++    section = _ensure_dict(_ensure_dict(cfg, "vault"), name)
++    if enabled:
++        section.pop("enabled", None)  # detected managers are on by default; this removes the opt-out
++    else:
++        section["enabled"] = False
++    if not enabled:
++        lock(name)
++    save_config(cfg)
++    return _ok(rid, {"name": name, "enabled": enabled})
++
++
++@method("vault.unlock")
++@_profile_scoped
++def _(rid, params: dict) -> dict:
++    """Unlock a manager with the master password typed in the Settings dialog (consumed by the CLI on stdin)."""
++    from agent.vault_backends import enabled_backends
++
++    name = str(params.get("name") or "")
++    password = str(params.get("password") or "")
++    backend = next((b for b in enabled_backends() if b.name == name and b.needs_unlock), None)
++    if backend is None:
++        return _err(rid, 5095, f"{name} is not an enabled password manager")
++    if not password:
++        return _err(rid, 5095, "master password is required")
++    try:
++        backend.unlock(password)  # type: ignore[attr-defined]
++    except Exception as e:
++        return _err(rid, 5095, str(e).replace(password, "[REDACTED]"))
++    finally:
++        del password
++    return _ok(rid, {"name": name, "unlocked": True})
++
++
++@method("vault.lock")
++@_profile_scoped
++def _(rid, params: dict) -> dict:
++    """Forget a manager's session token (or every one when ``name`` is omitted)."""
++    from agent.vault_backends.unlock import lock
++
++    name = params.get("name")
++    lock(str(name) if name else None)
++    return _ok(rid, {"locked": True})
++
++
++@method("vault.add")
++@_profile_scoped
++def _(rid, params: dict) -> dict:
++    """Refuse removed local collection without inspecting submitted secrets."""
++    return _err(rid, 5095, "Local credential storage has been removed. Request a private Kernel Vault form through Clanker.")
++
++
++@method("vault.remove")
++@_profile_scoped
++def _(rid, params: dict) -> dict:
++    """Refuse stale local-store deletion without opening old credential files."""
++    return _err(rid, 5095, "Local credential storage has been removed. Manage connected accounts through Clanker.")
+ 
+ 
+ def register(server) -> None:
+diff --git a/hermes/tools/browser_vault_tool.py b/hermes/tools/browser_vault_tool.py
+--- a/hermes/tools/browser_vault_tool.py
++++ b/hermes/tools/browser_vault_tool.py
+@@ -355,41 +355,10 @@
+     return json.dumps({"success": True, "backend": backend.name})
+ 
+ 
+-def browser_vault_save_login(label: str = "", task_id: Optional[str] = None) -> str:
+-    """Ask the user (masked prompt on their surface) for the login of the CURRENT page, store it in the local
+-    vault bound to that origin, and fill the password at once. The values never enter the conversation."""
+-    from agent.vault_backends.unlock import can_prompt_here, get_save_login_prompt_callback
+-    from agent.vault_store import get_vault_store
+-
+-    effective_task_id = task_id or "default"
+-    origin = _focus_bound_origin(effective_task_id, "", "login")
+-    if not origin:
+-        return json.dumps({"success": False, "error": "Open the site's login page first; the login is saved for that page's origin."})
+-    prompt = get_save_login_prompt_callback()
+-    if prompt is None or not can_prompt_here():
+-        return json.dumps({"success": False, "error_type": "prompt_unavailable",
+-                           "error": (f"This session cannot ask the user for a login (headless/cron/API). Tell them to run "
+-                                     f"`hermes vault add` or use Desktop → Settings → Passwords & Logins for {origin}.")})
+-    host = origin.split("://", 1)[-1]
+-    site = label.strip() or host
+-    answer = prompt(origin, host)  # the prompt names the site by host: the user recognises URLs, not agent labels
+-    if not answer or not answer.get("password") or not answer.get("identifier"):
+-        return json.dumps({"success": False, "error_type": "save_declined",
+-                           "error": "The user chose not to save a login for this site. Do not ask again this turn."})
+-    identifier = str(answer["identifier"]).strip()
+-    id_type = "email" if "@" in identifier else ("phone" if identifier.lstrip("+").isdigit() else "username")
+-    try:
+-        meta = get_vault_store().add_item("login", site, {"identifier_type": id_type, "identifier": identifier,
+-                                                        "password": str(answer["password"])}, origin=origin)
+-    except Exception as exc:
+-        return json.dumps({"success": False, "error_type": "save_failed", "error": str(exc)[:200]})
+-    finally:
+-        answer.clear()
+-    filled = json.loads(browser_vault_fill(meta.id, task_id=effective_task_id))
+-    return json.dumps({"success": True, "handle": meta.id, "origin": origin, "identifier": identifier,
+-                       "identifier_type": id_type, "fill": filled,
+-                       "next": "Type the identifier into the username field if the form has one, then submit."},
+-                      ensure_ascii=False)
++def browser_vault_save_login(label: str = "", task_id: Optional[str] = None) -> str:
++    """Refuse removed local collection before prompting or accessing a browser."""
++    return json.dumps({"success": False, "error_type": "local_vault_removed",
++                       "error": "Local credential storage has been removed. Request a private Kernel Vault form through Clanker."})
+ 
+ 
+ def browser_vault_enter_code(handle: str = "", task_id: Optional[str] = None, *,

@@ -1,0 +1,71 @@
+diff --git a/hermes/tests/tools/test_url_safety.py b/hermes/tests/tools/test_url_safety.py
+index ca004c3..7d0b392 100644
+--- a/hermes/tests/tools/test_url_safety.py
++++ b/hermes/tests/tools/test_url_safety.py
+@@ -494,6 +494,37 @@ class TestIPv4TranslatedIPv6SSRF:
+             assert is_always_blocked_url("http://[::ffff:0:a9fe:a9fe]/") is True
+ 
+ 
++class TestNAT64WellKnownPrefix:
++    @pytest.mark.parametrize('ipv4', ['8.8.8.8', '34.193.104.167'])
++    def test_public_ipv4_is_allowed_and_dialed_as_the_resolved_nat64_address(self, ipv4, monkeypatch):
++        monkeypatch.setenv('HERMES_ALLOW_PRIVATE_URLS', 'false')
++        _reset_allow_private_cache()
++        wrapped = str(ipaddress.IPv6Address(int(ipaddress.IPv6Address('64:ff9b::')) | int(ipaddress.IPv4Address(ipv4))))
++        with _resolves_to(wrapped):
++            assert is_safe_url('https://public.example/') is True
++            assert _resolved_http_connect_ips('public.example',443,'https') == [wrapped]
++
++    @pytest.mark.parametrize('ipv4', ['127.0.0.1', '10.0.0.1', '192.168.1.1', '100.64.0.1', '0.0.0.0', '224.0.0.1'])
++    def test_private_or_special_ipv4_remains_denied(self, ipv4, monkeypatch):
++        monkeypatch.setenv('HERMES_ALLOW_PRIVATE_URLS', 'false')
++        _reset_allow_private_cache()
++        wrapped = str(ipaddress.IPv6Address(int(ipaddress.IPv6Address('64:ff9b::')) | int(ipaddress.IPv4Address(ipv4))))
++        with _resolves_to(wrapped):
++            assert is_safe_url('https://private.example/') is False
++            with pytest.raises(SSRFConnectionBlocked):
++                _resolved_http_connect_ips('private.example',443,'https')
++
++    @pytest.mark.parametrize('ipv4', ['169.254.169.254', '100.100.100.200'])
++    def test_metadata_remains_always_denied(self, ipv4, monkeypatch):
++        monkeypatch.setenv('HERMES_ALLOW_PRIVATE_URLS', 'true')
++        _reset_allow_private_cache()
++        wrapped = str(ipaddress.IPv6Address(int(ipaddress.IPv6Address('64:ff9b::')) | int(ipaddress.IPv4Address(ipv4))))
++        with _resolves_to(wrapped):
++            assert is_always_blocked_url('https://metadata.example/') is True
++            assert is_safe_url('https://metadata.example/') is False
++        _reset_allow_private_cache()
++
++
+ class _FakeResponse:
+     """Minimal stand-in for an httpx response as seen inside a response hook."""
+ 
+diff --git a/hermes/tools/url_safety.py b/hermes/tools/url_safety.py
+index 3ecb011..f5208e5 100644
+--- a/hermes/tools/url_safety.py
++++ b/hermes/tools/url_safety.py
+@@ -125,6 +125,7 @@ _CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+ # answer an IPv4 name (on the reporting macOS host, fake-IP TUN DNS returns it alongside the
+ # plain address). ``ip.ipv4_mapped`` does not read it; ``_embedded_ipv4`` handles it explicitly.
+ _IPV4_TRANSLATED_NETWORK = ipaddress.ip_network("::ffff:0:0:0/96")
++_NAT64_WELL_KNOWN_NETWORK = ipaddress.ip_network("64:ff9b::/96")
+ 
+ # Address classes a ``security.fake_ip_ranges`` declaration can never excuse: a local proxy owns
+ # none of them, and a declaration is trusted like ``allow_private_urls`` for whatever it names,
+@@ -249,13 +250,14 @@ def _getaddrinfo(hostname: str, port: Optional[int] = None):
+ 
+ def _embedded_ipv4(ip: _IPAddress) -> _IPAddress:
+     """The IPv4 address an IPv6 wrapper stands for — IPv4-mapped (``::ffff:x.x.x.x``) or
+-    IPv4-translated (``::ffff:0:x.x.x.x``); *ip* unchanged otherwise. ``ipaddress`` reads both
++    IPv4-translated (``::ffff:0:x.x.x.x``) or RFC 6052 NAT64 (``64:ff9b::x.x.x.x``);
++    *ip* unchanged otherwise. ``ipaddress`` reads these
+     wrappers as distinct IPv6 addresses, so every classification must see through them, or a
+     resolver's sentinel / a cloud-metadata answer arrives as unrelated IPv6 space."""
+     if isinstance(ip, ipaddress.IPv6Address):
+         if ip.ipv4_mapped is not None:
+             return ip.ipv4_mapped
+-        if ip in _IPV4_TRANSLATED_NETWORK:
++        if ip in _IPV4_TRANSLATED_NETWORK or ip in _NAT64_WELL_KNOWN_NETWORK:
+             return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+     return ip
+ 

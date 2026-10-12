@@ -1,0 +1,62 @@
+--- a/hermes/agent/prompt_builder.py
++++ b/hermes/agent/prompt_builder.py
+@@ -158,7 +158,7 @@
+ DEFAULT_AGENT_IDENTITY = (
+     # A behavior spec (sizing rule, named prohibitions, earned-depth escape hatch), not a trait list — trait
+     # lists change nothing. Maintainer rule: models UNDER-explore by default; never re-add an exploration-thrift line.
+-    "You are Hermes Agent, built by Nous Research. Be direct: match the length of your reply to the weight of the ask "
++    "You are clanker. Be direct: match the length of your reply to the weight of the ask "
+     "— a one-line question gets a one-line answer, and finished work gets a short report of what changed, what's "
+     "verified, and what's left, never a replay of the process. No filler (\"Great question,\" \"I'd be happy to\"), no "
+     "restating the request back, no re-summarizing what you already said, no narrating tool calls the user can see. "
+@@ -169,7 +169,7 @@
+ HERMES_AGENT_HELP_GUIDANCE = (
+     # Injected only when skill_view exists AND the hermes-agent skill is installed (system_prompt.py slot
+     # resolution). No "when the two differ" clause: docs-are-authoritative already carries the precedence.
+-    "You run on Hermes Agent (by Nous Research). When the user needs help with Hermes itself — configuring, "
++    "Clanker uses Hermes Agent (by Nous Research) as its underlying runtime. When the user needs help with Hermes itself — configuring, "
+     "setting up, using, extending, or troubleshooting it — or when you need to understand your own features, "
+     "tools, or capabilities, the documentation at https://hermes-agent.nousresearch.com/docs is your "
+     "authoritative reference and always holds the latest, most up-to-date information. The `hermes-agent` "
+@@ -179,7 +179,7 @@
+ 
+ # Variant for sessions without the skills toolset (e.g. Blank Slate): naming skill_view() there would dangle.
+ HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS = (
+-    "You run on Hermes Agent (by Nous Research). When the user needs help with Hermes itself — configuring, "
++    "Clanker uses Hermes Agent (by Nous Research) as its underlying runtime. When the user needs help with Hermes itself — configuring, "
+     "setting up, using, extending, or troubleshooting it — or when you need to understand your own features, "
+     "tools, or capabilities, the documentation at https://hermes-agent.nousresearch.com/docs is the "
+     "authoritative reference and always holds the latest, most up-to-date information. Point the user there "
+--- a/hermes/hermes_cli/default_soul.py
++++ b/hermes/hermes_cli/default_soul.py
+@@ -7,7 +7,7 @@
+ # DEFAULT_AGENT_IDENTITY only serves sessions with no SOUL.md at all (e.g. skip_context_files), which is not
+ # the common case. See #95681.
+ DEFAULT_SOUL_MD = (
+-    "You are Hermes Agent, built by Nous Research. Be direct: match the length of your reply to the weight of "
++    "You are clanker. Be direct: match the length of your reply to the weight of "
+     "the ask — a one-line question gets a one-line answer, and finished work gets a short report of what "
+     "changed, what's verified, and what's left, never a replay of the process. No filler (\"Great question,\" "
+     "\"I'd be happy to\"), no restating the request back, no re-summarizing what you already said, no narrating "
+@@ -51,6 +51,9 @@
+     # ASCII-dashed variant seeded by scripts/install.ps1 (must stay pure ASCII, see
+     # tests/scripts/install/test_install_ps1_ascii_only.py); upgrading converges Windows installs on the em-dash text.
+     DEFAULT_SOUL_MD.replace("\u2014", "--"),
++    # The uncustomized Hermes seed used before this Clanker build's identity correction.
++    DEFAULT_SOUL_MD.replace("You are clanker.", "You are Hermes Agent, built by Nous Research.", 1),
++    DEFAULT_SOUL_MD.replace("You are clanker.", "You are Hermes Agent, built by Nous Research.", 1).replace("\u2014", "--"),
+ )
+ 
+ 
+--- a/hermes/tests/agent/test_prompt_builder.py
++++ b/hermes/tests/agent/test_prompt_builder.py
+@@ -360,7 +360,8 @@
+         with patch("pathlib.Path.home", return_value=fake_home):
+             result = build_context_files_prompt(cwd=str(tmp_path))
+         assert "Project Context" in result
+-        assert "Hermes Agent" in result
++        from hermes_cli.default_soul import DEFAULT_SOUL_MD
++        assert DEFAULT_SOUL_MD in result
+ 
+     def test_loads_agents_md(self, tmp_path):
+         (tmp_path / "AGENTS.md").write_text("Use Ruff for linting.")

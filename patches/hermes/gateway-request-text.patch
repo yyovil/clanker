@@ -1,0 +1,261 @@
+diff --git a/hermes/agent/gateway_context.py b/hermes/agent/gateway_context.py
+--- a/hermes/agent/gateway_context.py
++++ b/hermes/agent/gateway_context.py
+@@ -38,6 +38,8 @@
+     conversation: tuple[tuple[str, str], ...] = ()
+     # Copied tool contexts share this turn's backend-owned handoff evidence.
+     handoff_context: dict = field(default_factory=dict, compare=False, repr=False)
++    # Authenticated current request, kept separate from model-only sender/history context.
++    request_message: Optional[str] = None
+ 
+ 
+ _turn = ContextVar('hermes_gateway_turn', default=None)
+@@ -48,7 +50,7 @@
+ 
+ 
+ @contextmanager
+-def gateway_turn_scope(runner, source, task_id, message, message_id=None, *, conversation_history=()):
++def gateway_turn_scope(runner, source, task_id, message, message_id=None, *, conversation_history=(), request_message=None):
+     from hermes_constants import get_hermes_home
+     # Handoffs need the request and clarification exchange, never tool results,
+     # credentials, reasoning or a worker's unrelated private session history.
+@@ -65,7 +67,8 @@
+         if isinstance(content, str) and content.strip():
+             conversation.append((role, content))
+     token = _turn.set(GatewayTurn(runner, source, str(task_id), str(message), str(get_hermes_home()),
+-                                  str(message_id) if message_id is not None else None, tuple(conversation)))
++                                  str(message_id) if message_id is not None else None, tuple(conversation),
++                                  request_message=str(message) if request_message is None else request_message))
+     try:
+         yield
+     finally:
+diff --git a/hermes/gateway/turn_context.py b/hermes/gateway/turn_context.py
+--- a/hermes/gateway/turn_context.py
++++ b/hermes/gateway/turn_context.py
+@@ -97,3 +97,5 @@
+     _native_slack_task_cards: bool = False
+     native_tool_start_callback: Optional[Callable] = None
+     native_tool_complete_callback: Optional[Callable] = None
++    # Current authenticated event text before sender/history/edit wrappers. Never parsed from prompt text.
++    request_message: Optional[str] = None
+diff --git a/hermes/gateway/run_turn_runner.py b/hermes/gateway/run_turn_runner.py
+--- a/hermes/gateway/run_turn_runner.py
++++ b/hermes/gateway/run_turn_runner.py
+@@ -1756,7 +1756,8 @@
+             from agent.gateway_context import gateway_turn_scope
+             with gateway_turn_scope(self._runner, ctx.source, ctx.session_id, ctx.message,
+                                     message_id=ctx.inbound_message_id,
+-                                    conversation_history=agent_history), notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
++                                    conversation_history=agent_history,
++                                    request_message=ctx.request_message), notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
+                 return agent.run_conversation(api_message, **kwargs)
+         finally:
+             unregister_gateway_notify(session_key)
+diff --git a/hermes/gateway/run_turn.py b/hermes/gateway/run_turn.py
+--- a/hermes/gateway/run_turn.py
++++ b/hermes/gateway/run_turn.py
+@@ -2231,6 +2231,7 @@
+                     **message_author_metadata(event, source)},
+                 message_type=event.message_type,
+                 scheduled_heartbeat=bool(getattr(event, "_heartbeat_session_id", None)),
++                request_message=event.text,
+             )
+             _turn_seconds = time.monotonic() - _turn_started_monotonic
+ 
+@@ -3874,6 +3875,7 @@
+         # distinct from the reply anchor above (None in forum topics). Carry it or two chained
+         # topic turns with the same text would collide on one obligation id (queued-final-ledger).
+         next_inbound_id = None
++        next_request_message = None
+         # Queued Discord turns carry the same routing note as first turns; persist the authored text.
+         next_persist_message = None
+         next_display_kind = display_kind_for_event(pending_event)
+@@ -3904,6 +3906,7 @@
+             next_persist_message = strip_discord_triggering_note(pending_event, next_message)
+             next_message_id = self._reply_anchor_for_event(pending_event)
+             next_inbound_id = str(pending_event.message_id) if getattr(pending_event, "message_id", None) else None
++            next_request_message = getattr(pending_event, "text", None)
+             next_channel_prompt = getattr(pending_event, "channel_prompt", None)
+             next_message_type = getattr(pending_event, "message_type", None)
+ 
+@@ -3955,6 +3958,7 @@
+                 persist_user_display_kind=next_display_kind,
+                 persist_user_display_metadata={**diagnostic_metadata(pending_event),
+                     **message_author_metadata(pending_event, next_source)} or None,
++                request_message=next_request_message,
+             )
+         except asyncio.CancelledError:
+             await _run_followup_processing_hook(
+@@ -4284,6 +4288,7 @@
+         persist_user_display_kind: Optional[str] = None, message_type: Optional[str] = None,
+         persist_user_display_metadata: Optional[dict] = None,
+         scheduled_heartbeat: bool = False,
++        request_message: Optional[str] = None,
+     ) -> Dict[str, Any]:
+         """Run the agent; returns the full run_conversation result dict.
+ 
+@@ -4321,6 +4326,7 @@
+             persist_user_display_kind=persist_user_display_kind,
+             persist_user_display_metadata=persist_user_display_metadata,
+             scheduled_heartbeat=scheduled_heartbeat,
++            request_message=request_message,
+         )
+         _status_thread_metadata = self._run_agent_bind_turn_wiring(
+             turn_ctx, turn_runner, source, event_message_id, disp._native_slack_task_cards,
+diff --git a/hermes/tests/gateway/test_gateway_request_text.py b/hermes/tests/gateway/test_gateway_request_text.py
+new file mode 100644
+--- /dev/null
++++ b/hermes/tests/gateway/test_gateway_request_text.py
+@@ -0,0 +1,152 @@
++"""Authorization sees current event text while model prompts retain gateway context."""
++import asyncio
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, MagicMock
++
++import pytest
++
++from agent.gateway_context import current_gateway_turn, gateway_turn_scope
++from gateway.config import GatewayConfig, Platform
++from gateway.platforms.event import MessageEvent
++from gateway.run import GatewayRunner
++from gateway.run_turn_runner import TurnRunner
++from gateway.session import SessionSource
++from gateway.turn_context import TurnContext
++
++
++EDIT_CONTEXT = ('This Slack message was edited. The following request replaces its '
++                'previous wording. Work only on the updated request.')
++
++
++def source():
++    return SessionSource(Platform.SLACK, 'D1', user_id='U1', scope_id='T1',
++                         thread_id='1790000000.000001', chat_type='dm')
++
++
++def runner():
++    result = object.__new__(GatewayRunner)
++    result.config = GatewayConfig(group_sessions_per_user=False)
++    result.adapters = {}
++    return result
++
++
++@pytest.mark.parametrize('raw,expected', [(None, 'wrapped prompt'), ('', ''), ('retry', 'retry')])
++def test_gateway_scope_defaults_only_for_absent_request_text(tmp_path, monkeypatch, raw, expected):
++    monkeypatch.setenv('HERMES_HOME', str(tmp_path))
++    with gateway_turn_scope('runner', source(), 'session', 'wrapped prompt',
++                            request_message=raw):
++        current = current_gateway_turn()
++        assert current.message == 'wrapped prompt'
++        assert current.request_message == expected
++    assert current_gateway_turn() is None
++
++
++def test_tool_context_receives_raw_request_without_changing_model_or_persisted_text(tmp_path, monkeypatch):
++    monkeypatch.setenv('HERMES_HOME', str(tmp_path))
++    wrapped = EDIT_CONTEXT + '\n\n[New message]\nretry'
++    captured = []
++
++    class Agent:
++        def run_conversation(self, message, **kwargs):
++            captured.append(current_gateway_turn())
++            assert message == wrapped
++            assert kwargs['persist_user_message'] == wrapped
++            return {'final_response': 'continued'}
++
++    native = SimpleNamespace(_consume_pending_native_image_paths=lambda key: [])
++    context = TurnContext(source=source(), session_id='session', session_key='lane',
++                          message=wrapped, request_message='retry',
++                          inbound_message_id='1790000000.000002')
++    result = TurnRunner(native, context)._run_conversation_with_approval(
++        Agent(), [], '', wrapped, None)
++    assert result['final_response'] == 'continued'
++    assert captured[0].request_message == 'retry'
++    assert captured[0].message == wrapped
++    assert captured[0].message_id == '1790000000.000002'
++    assert current_gateway_turn() is None
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize('raw', ['retry', '', EDIT_CONTEXT + '\n\n[New message]\nretry'])
++async def test_initial_gateway_run_passes_event_text_without_parsing_wrappers(raw):
++    native = runner()
++    current_source = source()
++    event = MessageEvent(raw, source=current_source, message_id='1790000000.000002',
++                         channel_context=EDIT_CONTEXT, metadata={'request_message': 'retry'})
++    wrapped = native._prefix_inbound_sender_context(event, current_source, raw)
++    entry = SimpleNamespace(session_id='session')
++    prepared = native._PreparedTurn([], '', wrapped, wrapped, None, None, 'session', 'owner')
++    native._hmwa_resolve_session = AsyncMock(return_value=(current_source, entry, 'lane'))
++    native._hmwa_prepare_turn = AsyncMock(return_value=(prepared, None))
++    native.hooks = SimpleNamespace(emit=AsyncMock())
++    native._clear_session_env = MagicMock()
++    # Stop immediately after the production handoff to the agent, before reply delivery.
++    native._run_agent = AsyncMock(side_effect=asyncio.CancelledError)
++    with pytest.raises(asyncio.CancelledError):
++        await native._handle_message_with_agent(event, current_source, 'lane', 1)
++    parameters = native._run_agent.await_args.kwargs
++    assert parameters['request_message'] == raw
++    assert parameters['message'] == wrapped
++    assert parameters['persist_user_message'] == wrapped
++    assert parameters['inbound_message_id'] == event.message_id
++
++
++@pytest.mark.asyncio
++async def test_queued_followup_preserves_its_own_raw_request():
++    native = runner()
++    current_source = source()
++    event = MessageEvent('retry', source=current_source, message_id='1790000000.000003',
++                         channel_context=EDIT_CONTEXT)
++    wrapped = native._prefix_inbound_sender_context(event, current_source, event.text)
++    native._MAX_INTERRUPT_DEPTH = 8
++    native._run_agent = AsyncMock(return_value={'final_response': 'done', 'messages': []})
++    native._run_agent_deliver_first_response = AsyncMock()
++    native._is_goal_continuation_event = MagicMock(return_value=False)
++    native._session_key_for_source = MagicMock(return_value='lane')
++    native._prepare_profile_scoped_inbound_message_text = AsyncMock(return_value=wrapped)
++    native._reply_anchor_for_event = MagicMock(return_value=None)
++    native._delivery_adapter_for = MagicMock(return_value=None)
++    native._refresh_agent_cache_message_count = AsyncMock()
++    context = TurnContext(source=current_source, session_id='session', session_key='lane',
++                          run_generation=1, message='previous', request_message='previous', history=[])
++    await native._run_agent_queued_followup(
++        context, adapter=None, pending=event.text, pending_event=event,
++        response='old response', result={'interrupted': True, 'messages': []}, stream_task=None)
++    parameters = native._run_agent.await_args.kwargs
++    assert parameters['request_message'] == 'retry'
++    assert parameters['message'] == wrapped
++    assert parameters['persist_user_message'] == wrapped
++    assert parameters['inbound_message_id'] == event.message_id
++
++
++@pytest.mark.asyncio
++async def test_full_runner_binds_authored_text_for_initial_and_queued_turns(tmp_path, monkeypatch):
++    from tests.gateway.test_queued_followup_processing_hooks import (
++        HookRecordingAdapter, SESSION_KEY, _install_fake_agent, _make_runner, _source,
++    )
++    captured = []
++
++    class Agent:
++        def __init__(self, **kwargs):
++            self.tools = []
++
++        def run_conversation(self, message, **kwargs):
++            turn = current_gateway_turn()
++            captured.append((message, turn.message, turn.request_message, turn.message_id))
++            return {'final_response': 'done', 'messages': [], 'api_calls': 1}
++
++    _install_fake_agent(monkeypatch, tmp_path, Agent)
++    monkeypatch.setenv('HERMES_HOME', str(tmp_path))
++    adapter = HookRecordingAdapter()
++    native = _make_runner(adapter)
++    adapter._pending_messages[SESSION_KEY] = MessageEvent(
++        'retry', source=_source(), message_id='1790000000.000003', channel_context=EDIT_CONTEXT)
++    initial = 'Observed history\n\n[New message]\nsign in'
++    result = await native._run_agent(
++        message=initial, request_message='sign in', inbound_message_id='1790000000.000002',
++        context_prompt='', history=[], source=_source(), session_id='session', session_key=SESSION_KEY)
++    queued = EDIT_CONTEXT + '\n\n[New message]\nretry'
++    assert captured == [(initial, initial, 'sign in', '1790000000.000002'),
++                        (queued, queued, 'retry', '1790000000.000003')]
++    assert result['final_response'] == 'done'
++    assert current_gateway_turn() is None

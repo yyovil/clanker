@@ -1,0 +1,28 @@
+# Keep local environments, credentials, and experiment state out of Git.
+# Hermes source is versioned under /hermes/.
+/.local/
+/.playwright-cli/
+/output/
+/verification/
+/videos/
+/.cursor/
+
+# Only the 4x task replays and Slack screenshots are published.
+/assets/benchmark/2026-10-12/
+/docs/CLANKER_BENCHMARK_RUN_2026-10-12.md
+/assets/benchmark/2026-10-12-corrected/*
+!/assets/benchmark/2026-10-12-corrected/*-4x.mp4
+!/assets/benchmark/2026-10-12-corrected/*.png
+
+# Internal audits, planning notes, and the submission checklist.
+/HERMES_VERIFICATION_REVIEW.md
+/VERIFICATION_STRATEGY.md
+/MOD_HERMES.md
+/POC_SCOPE.md
+/production/*.md
+/docs/explorations/*.md
+/docs/SUBMISSION.md
+
+**/__pycache__/
+*.py[cod]
+.DS_Store

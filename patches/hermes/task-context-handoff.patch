@@ -1,0 +1,87 @@
+diff --git a/hermes/agent/gateway_context.py b/hermes/agent/gateway_context.py
+--- a/hermes/agent/gateway_context.py
++++ b/hermes/agent/gateway_context.py
+@@ -35,6 +35,7 @@
+     message: str
+     home: str
+     message_id: Optional[str] = None
++    conversation: tuple[tuple[str, str], ...] = ()
+ 
+ 
+ _turn = ContextVar('hermes_gateway_turn', default=None)
+@@ -45,10 +46,24 @@
+ 
+ 
+ @contextmanager
+-def gateway_turn_scope(runner, source, task_id, message, message_id=None):
++def gateway_turn_scope(runner, source, task_id, message, message_id=None, *, conversation_history=()):
+     from hermes_constants import get_hermes_home
++    # Handoffs need the request and clarification exchange, never tool results,
++    # credentials, reasoning or a worker's unrelated private session history.
++    conversation = []
++    for entry in conversation_history:
++        role = entry.get('role')
++        if role not in ('user', 'assistant') or entry.get('tool_calls'):
++            continue
++        content = entry.get('content')
++        if isinstance(content, list):
++            content = '\n'.join(part['text'] for part in content
++                                if isinstance(part, dict) and part.get('type') == 'text'
++                                and isinstance(part.get('text'), str))
++        if isinstance(content, str) and content.strip():
++            conversation.append((role, content))
+     token = _turn.set(GatewayTurn(runner, source, str(task_id), str(message), str(get_hermes_home()),
+-                                  str(message_id) if message_id is not None else None))
++                                  str(message_id) if message_id is not None else None, tuple(conversation)))
+     try:
+         yield
+     finally:
+diff --git a/hermes/gateway/run_turn_runner.py b/hermes/gateway/run_turn_runner.py
+--- a/hermes/gateway/run_turn_runner.py
++++ b/hermes/gateway/run_turn_runner.py
+@@ -1750,7 +1750,8 @@
+             from agent.notification_presentation import notification_turn
+             from agent.gateway_context import gateway_turn_scope
+             with gateway_turn_scope(self._runner, ctx.source, ctx.session_id, ctx.message,
+-                                    message_id=ctx.inbound_message_id), notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
++                                    message_id=ctx.inbound_message_id,
++                                    conversation_history=agent_history), notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
+                 return agent.run_conversation(api_message, **kwargs)
+         finally:
+             unregister_gateway_notify(session_key)
+diff --git a/hermes/tests/gateway/test_isolated_gateway_task.py b/hermes/tests/gateway/test_isolated_gateway_task.py
+--- a/hermes/tests/gateway/test_isolated_gateway_task.py
++++ b/hermes/tests/gateway/test_isolated_gateway_task.py
+@@ -12,6 +12,32 @@
+ from gateway.run_turn_runner import TurnRunner
+ from gateway.session import SessionSource
+ from gateway.turn_context import TurnContext
++
++
++def test_native_turn_binds_conversation_for_task_handoff_without_mutating_history(tmp_path, monkeypatch):
++    monkeypatch.setenv('HERMES_HOME', str(tmp_path))
++    source = SessionSource(Platform.SLACK, 'C1', user_id='U1', scope_id='T1', thread_id='100.1')
++    history = [{'role': 'user', 'content': 'Find the earliest Mumbai flight on 9 October.'},
++               {'role': 'assistant', 'content': [{'type': 'text', 'text': 'Where from?'}]},
++               {'role': 'tool', 'content': 'PRIVATE_TOOL_CANARY'}]
++    before = repr(history)
++    captured = []
++
++    class Agent:
++        def run_conversation(self, message, **kwargs):
++            captured.append(current_gateway_turn())
++            assert kwargs['conversation_history'] is history
++            return {'final_response': 'continued'}
++
++    runner = SimpleNamespace(_consume_pending_native_image_paths=lambda key: [])
++    ctx = TurnContext(source=source, session_id='flight-session', session_key='flight-lane',
++                      message='NGP', inbound_message_id='100.2')
++    result = TurnRunner(runner, ctx)._run_conversation_with_approval(Agent(), history, '', None, None)
++    assert result['final_response'] == 'continued'
++    assert captured[0].conversation == (
++        ('user', history[0]['content']), ('assistant', 'Where from?'))
++    assert captured[0].message == 'NGP' and captured[0].message_id == '100.2'
++    assert repr(history) == before and current_gateway_turn() is None
+ 
+ 
+ def test_worker_capability_is_not_wire_data_and_owns_full_reply(monkeypatch, tmp_path):

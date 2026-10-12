@@ -1,0 +1,388 @@
+diff --git a/hermes/agent/gateway_context.py b/hermes/agent/gateway_context.py
+--- a/hermes/agent/gateway_context.py
++++ b/hermes/agent/gateway_context.py
+@@ -7,6 +7,24 @@
+ from contextlib import contextmanager
+ from contextvars import ContextVar
+ from dataclasses import dataclass
++from typing import Awaitable, Callable, Optional
++
++
++@dataclass(frozen=True)
++class IsolatedGatewayTask:
++    """Process-local capability for an isolated worker with durable reply ownership.
++
++    Only trusted gateway code constructs this object. Ingress metadata and saved
++    SessionSource dictionaries cannot create it; its owner restores it from its
++    own validated durable task record after a restart.
++    """
++    task_id: str
++    respond: Callable[[object, str, object], Awaitable[None]]
++
++
++def isolated_gateway_task(source):
++    task = getattr(source, 'isolated_task', None)
++    return task if isinstance(task, IsolatedGatewayTask) else None
+ 
+ 
+ @dataclass(frozen=True)
+@@ -16,6 +34,7 @@
+     task_id: str
+     message: str
+     home: str
++    message_id: Optional[str] = None
+ 
+ 
+ _turn = ContextVar('hermes_gateway_turn', default=None)
+@@ -26,9 +45,10 @@
+ 
+ 
+ @contextmanager
+-def gateway_turn_scope(runner, source, task_id, message):
++def gateway_turn_scope(runner, source, task_id, message, message_id=None):
+     from hermes_constants import get_hermes_home
+-    token = _turn.set(GatewayTurn(runner, source, str(task_id), str(message), str(get_hermes_home())))
++    token = _turn.set(GatewayTurn(runner, source, str(task_id), str(message), str(get_hermes_home()),
++                                  str(message_id) if message_id is not None else None))
+     try:
+         yield
+     finally:
+diff --git a/hermes/gateway/session.py b/hermes/gateway/session.py
+--- a/hermes/gateway/session.py
++++ b/hermes/gateway/session.py
+@@ -97,6 +97,9 @@
+     # over the authenticated relay WebSocket. ``platform`` is the UNDERLYING platform, not
+     # ``relay``, so authz must key upstream trust off THIS flag.
+     delivered_via_upstream_relay: bool = False
++    # Process-local worker capability: never accepted from ingress or serialized.
++    # Trusted task owners restore it separately from their durable task records.
++    isolated_task: object = field(default=None, init=False, repr=False, compare=False)
+ 
+     def __post_init__(self) -> None:
+         # Mirror scope_id/guild_id onto each other (scope_id wins) so readers of EITHER agree.
+diff --git a/hermes/gateway/run_turn.py b/hermes/gateway/run_turn.py
+--- a/hermes/gateway/run_turn.py
++++ b/hermes/gateway/run_turn.py
+@@ -16,6 +16,7 @@
+ import threading
+ import time
+ from agent.i18n import t
++from agent.gateway_context import isolated_gateway_task
+ from agent.session_activity import format_iteration_progress
+ from agent.turn_failure_copy import FAILED_TURN_DISPLAY_KIND, FAILED_TURN_NOTICE, PARTIAL_FAILED_TURN_NOTICE
+ from contextlib import nullcontext, suppress
+@@ -1930,6 +1931,18 @@
+     ):
+         """Final delivery decisions: intentional silence, voice reply, streamed-turn media/footer.
+         Returns the text for the adapter to send, or ``None`` when already delivered."""
++        isolated = isolated_gateway_task(source)
++        if isolated is not None:
++            # The capability owner persists and publishes the reply. No private
++            # worker text, voice, media or footer enters ordinary adapter egress.
++            event._isolated_response = str(response or '')
++            try:
++                await isolated.respond(event, str(response or ''), self)
++            except Exception:
++                # Its durable task remains pending. Never fall through to the
++                # adapter's ordinary error reply if persistence/publication fails.
++                logger.warning("Isolated task reply remains pending: task=%s", isolated.task_id)
++            return None
+         if diagnostic_wake_muted(event):
+             return None
+         # Intentional silence is a delivery decision: the [SILENT] turn stays persisted (alternation).
+@@ -2167,6 +2180,11 @@
+             event, source, session_entry, session_key, _quick_key, run_generation,
+         )
+         if not isinstance(prepared, self._PreparedTurn):
++            if prepared is not None and isolated_gateway_task(source) is not None:
++                return await self._hmwa_deliver_turn_response(
++                    event, source, session_entry, session_key, run_generation,
++                    {"failed": True}, [], prepared, None, False,
++                )
+             return prepared
+         history, message_text = prepared.history, prepared.message_text
+ 
+@@ -2260,7 +2278,13 @@
+             )
+ 
+         except Exception as e:
+-            return await self._hmwa_agent_error_reply(e, event, source, session_entry, session_key, prepared)
++            error_reply = await self._hmwa_agent_error_reply(e, event, source, session_entry, session_key, prepared)
++            if isolated_gateway_task(source) is not None:
++                return await self._hmwa_deliver_turn_response(
++                    event, source, session_entry, session_key, run_generation,
++                    {"failed": True}, [], error_reply, None, False,
++                )
++            return error_reply
+         finally:
+             # Restore session context variables to their pre-handler state
+             self._clear_session_env(_session_env_tokens)
+@@ -3036,6 +3060,14 @@
+                 _native_slack_task_cards = bool(adapter.native_task_cards_enabled())
+             except Exception:
+                 logger.debug("Slack native task-card config check failed", exc_info=True)
++        if isolated_gateway_task(source) is not None:
++            # A worker's only presentation surface is its trusted final callback.
++            tool_progress_enabled = False
++            _live_status_mode, _live_status_adapter = "off", None
++            log_mode_enabled = False
++            progress_mode = "off"
++            interim_assistant_messages_enabled = False
++            _thinking_enabled = _native_slack_task_cards = False
+         return self._RunAgentDisplay(
+             user_config=user_config, platform_key=platform_key, enabled_toolsets=enabled_toolsets,
+             disabled_toolsets=disabled_toolsets, resolve_display_setting=resolve_display_setting,
+@@ -3102,6 +3134,8 @@
+         turn_runner = TurnRunner(self, turn_ctx)
+         turn_ctx.mute_notification_reply = diagnostic_turn_muted(
+             turn_ctx.persist_user_display_metadata, source.platform, turn_ctx.user_config)
++        if isolated_gateway_task(source) is not None:
++            turn_ctx.mute_notification_reply = True
+         # Agent tool-lifecycle callbacks live on the runner (bound methods, same signatures).
+         turn_ctx.progress_callback = turn_runner.progress_callback
+         turn_ctx.voice_ack_callback = turn_runner.voice_ack_callback
+@@ -3498,6 +3532,8 @@
+ 
+     async def _run_agent_inactivity_warning(self, worker, source, _status_thread_metadata) -> None:
+         """Staged one-shot warning before the inactivity timeout escalates."""
++        if isolated_gateway_task(source) is not None:
++            return
+         from gateway.run import _interim_metadata
+         _warn_adapter = self._delivery_adapter_for(source)
+         if not _warn_adapter:
+diff --git a/hermes/gateway/run_turn_runner.py b/hermes/gateway/run_turn_runner.py
+--- a/hermes/gateway/run_turn_runner.py
++++ b/hermes/gateway/run_turn_runner.py
+@@ -20,6 +20,7 @@
+ from typing import TYPE_CHECKING, Any, Dict, List, Optional
+ 
+ from agent.interrupt_compat import _accepts_keyword
++from agent.gateway_context import isolated_gateway_task
+ from agent.replay_cleanup import canonicalize_replay_history
+ from gateway.config import Platform
+ from gateway.media_repair import repair_explicit_computer_use_media_paths
+@@ -911,7 +912,7 @@
+ 
+     def _setup_stream_consumer(self, platform_key):
+         ctx = self._ctx
+-        if ctx.mute_notification_reply:
++        if ctx.mute_notification_reply or isolated_gateway_task(ctx.source) is not None:
+             return None, None, None, False
+         stream_consumer = None
+         # The streaming-TTS consumer is created on the outer loop thread before run_sync launches;
+@@ -1107,12 +1108,16 @@
+         ctx = self._ctx
+         runner = self._runner
+         src = ctx.source
++        isolated = isolated_gateway_task(src) is not None
++        disabled_toolsets = ctx.disabled_toolsets
++        if isolated:
++            disabled_toolsets = list(dict.fromkeys([*(disabled_toolsets or []), "memory", "session_search"]))
+         return ctx.AIAgent(
+             model=turn_route["model"], **turn_route["runtime"], **_checkpoint_agent_kwargs(ctx.user_config),
+             max_iterations=max_iterations, quiet_mode=True, verbose_logging=False,
+-            enabled_toolsets=ctx.enabled_toolsets, disabled_toolsets=ctx.disabled_toolsets,
++            enabled_toolsets=ctx.enabled_toolsets, disabled_toolsets=disabled_toolsets,
+             ephemeral_system_prompt=combined_ephemeral or None,
+-            prefill_messages=runner._prefill_messages or None,
++            prefill_messages=None if isolated else runner._prefill_messages or None,
+             reasoning_config=reasoning_config, service_tier=runner._service_tier,
+             request_overrides=turn_route.get("request_overrides"),
+             providers_allowed=pr.get("only"), providers_ignored=pr.get("ignore"), providers_order=pr.get("order"),
+@@ -1126,9 +1131,11 @@
+             # Reload from disk — do not reuse the startup snapshot.
+             # See #60955.
+             fallback_model=self._runner._refresh_fallback_model(),
+-            skip_context_files=skip_context_files,
++            skip_context_files=skip_context_files or isolated,
++            skip_memory=isolated,
++            skip_background_review=isolated,
+             # Keep the persona even with minimal context: soul identity is one small file.
+-            load_soul_identity=True,
++            load_soul_identity=not isolated,
+         )
+ 
+     def _resolve_turn_agent(self, turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr):
+@@ -1144,6 +1151,10 @@
+             user_id_alt=getattr(ctx.source, "user_id_alt", None),
+             skip_context_files=skip_context_files,
+         )
++        isolated = isolated_gateway_task(ctx.source)
++        if isolated is not None:
++            # A worker can never adopt an ordinary cached agent's private prompt.
++            sig = (sig, "isolated-task", isolated.task_id)
+         cache_lock = getattr(runner, "_agent_cache_lock", None)
+         cache = getattr(runner, "_agent_cache", None)
+         peek_sid, dead = self._cached_sid_is_dead(cache_lock, cache)
+@@ -1271,10 +1282,13 @@
+         # Must-deliver notes for THIS turn ride the current user message (api_content sidecar), never
+         # the system prompt. Assigned unconditionally so a reused agent never replays a stale note.
+         agent._gateway_turn_context_notes = "\n\n".join(runner._consume_pending_turn_sidecar_notes(ctx.session_key))
+-        agent.background_review_callback, bg_release = self._make_bg_review_callbacks()
++        if isolated_gateway_task(ctx.source) is not None:
++            agent.background_review_callback, bg_release = None, None
++        else:
++            agent.background_review_callback, bg_release = self._make_bg_review_callbacks()
+         # Register the release hook on the adapter so base.py's finally block fires it after the
+         # main response is delivered.
+-        if ctx._status_adapter and ctx.session_key:
++        if bg_release is not None and ctx._status_adapter and ctx.session_key:
+             if getattr(type(ctx._status_adapter), "register_post_delivery_callback", None) is not None:
+                 ctx._status_adapter.register_post_delivery_callback(ctx.session_key, bg_release, generation=ctx.run_generation)
+             else:
+@@ -1302,6 +1316,16 @@
+             agent.stream_delta_callback = None
+             agent.interim_assistant_callback = None
+             agent.thinking_progress = False
++        if isolated_gateway_task(ctx.source) is not None:
++            agent.tool_progress_callback = None
++            agent.tool_start_callback = None
++            agent.tool_complete_callback = None
++            agent.stream_delta_callback = None
++            agent.interim_assistant_callback = None
++            agent.status_callback = None
++            agent.notice_callback = None
++            agent.thinking_progress = False
++            agent.memory_notifications = "off"
+         ctx.agent_holder[0] = agent  # interrupt support
+         # The titler fires from the turn prologue, so attach the rename lane before the run.
+         self._attach_session_title_callback(agent, ctx)
+@@ -1725,7 +1749,8 @@
+                 kwargs["persist_user_platform_id"] = str(ctx.inbound_message_id)
+             from agent.notification_presentation import notification_turn
+             from agent.gateway_context import gateway_turn_scope
+-            with gateway_turn_scope(self._runner, ctx.source, ctx.session_id, ctx.message), notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
++            with gateway_turn_scope(self._runner, ctx.source, ctx.session_id, ctx.message,
++                                    message_id=ctx.inbound_message_id), notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
+                 return agent.run_conversation(api_message, **kwargs)
+         finally:
+             unregister_gateway_notify(session_key)
+diff --git a/hermes/tests/gateway/test_isolated_gateway_task.py b/hermes/tests/gateway/test_isolated_gateway_task.py
+new file mode 100644
+--- /dev/null
++++ b/hermes/tests/gateway/test_isolated_gateway_task.py
+@@ -0,0 +1,124 @@
++"""Trusted isolated workers withhold private context and own final reply delivery."""
++
++import asyncio
++import threading
++from types import SimpleNamespace
++from unittest.mock import MagicMock
++
++from agent.gateway_context import IsolatedGatewayTask, current_gateway_turn, gateway_turn_scope
++from gateway.config import Platform
++from gateway.platforms.event import MessageEvent
++from gateway.run import GatewayRunner
++from gateway.run_turn_runner import TurnRunner
++from gateway.session import SessionSource
++from gateway.turn_context import TurnContext
++
++
++def test_worker_capability_is_not_wire_data_and_owns_full_reply(monkeypatch, tmp_path):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    captured = []
++
++    async def respond(event, response, runner):
++        captured.append((event, response, runner))
++
++    source = SessionSource(Platform.SLACK, "D1", user_id="U1", scope_id="T1")
++    source.isolated_task = IsolatedGatewayTask("task-1", respond)
++    restored = SessionSource.from_dict({**source.to_dict(), "isolated_task": source.isolated_task})
++    assert restored.isolated_task is None
++    assert "isolated_task" not in source.to_dict()
++    assert "respond" not in repr(source)
++    with gateway_turn_scope("runner", source, "session-1", "request", message_id="resume-1"):
++        assert current_gateway_turn().message_id == "resume-1"
++    assert current_gateway_turn() is None
++
++    runner = object.__new__(GatewayRunner)
++    runner._delivery_adapter_for = MagicMock(side_effect=AssertionError("ordinary egress entered"))
++    event = MessageEvent("continue", source=source)
++    response = "complete result " * 100
++    result = asyncio.run(runner._hmwa_deliver_turn_response(
++        event, source, None, "worker", None, {"already_sent": True}, [], response, "footer", False,
++    ))
++    assert result is None
++    assert captured == [(event, response, runner)]
++    runner._delivery_adapter_for.assert_not_called()
++
++    async def failed_publication(*_args):
++        raise RuntimeError("publication unavailable")
++
++    source.isolated_task = IsolatedGatewayTask("task-1", failed_publication)
++    assert asyncio.run(runner._hmwa_deliver_turn_response(
++        event, source, None, "worker", None, {}, [], response, None, False,
++    )) is None
++    runner._delivery_adapter_for.assert_not_called()
++
++
++def test_worker_build_excludes_private_memory_and_ordinary_cache(monkeypatch, tmp_path):
++    from agent.agent_init import _init_memory
++    from gateway import run as gateway_run
++    from model_tools import _select_tool_names
++
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    (tmp_path / "memories").mkdir()
++    (tmp_path / "memories" / "MEMORY.md").write_text("unrelated private DM fact")
++    (tmp_path / "memories" / "USER.md").write_text("unrelated private user profile")
++    monkeypatch.setattr(gateway_run, "_checkpoint_agent_kwargs", lambda _cfg: {})
++
++    class MemoryProbe:
++        def __init__(self, **kwargs):
++            self.kwargs = kwargs
++            self.enabled_toolsets = kwargs["enabled_toolsets"]
++            self.disabled_toolsets = kwargs["disabled_toolsets"]
++            self.tools = []
++            _init_memory(self, {}, kwargs["skip_memory"], "slack")
++
++    async def respond(*_args):
++        pass
++
++    source = SessionSource(Platform.SLACK, "D1", user_id="U1", scope_id="T1")
++    runner = MagicMock()
++    runner._prefill_messages = [{"role": "user", "content": "private prefill"}]
++    runner._session_db = None
++    runner._agent_cache_lock = threading.RLock()
++    runner._agent_cache = {}
++    runner._agent_config_signature.return_value = "ordinary-signature"
++    runner._extract_cache_busting_config.return_value = {}
++    runner._refresh_fallback_model.return_value = None
++    ctx = TurnContext(source=source, AIAgent=MemoryProbe, enabled_toolsets=["memory", "session_search"],
++                      user_config={}, session_key="lane", session_id="session-1")
++    turn = TurnRunner(runner, ctx)
++    route = {"model": "test-model", "runtime": {}}
++    ordinary = turn._build_fresh_agent(route, "slack", "", 5, None, {}, False)
++    assert ordinary._memory_store is not None
++    assert "unrelated private DM fact" in ordinary._memory_store.format_for_system_prompt("memory")
++    runner._agent_cache[ctx.session_key] = (ordinary, "ordinary-signature", None, ctx.session_id)
++
++    source.isolated_task = IsolatedGatewayTask("task-1", respond)
++    worker, reused = turn._resolve_turn_agent(route, "slack", "", 5, None, {})
++    assert not reused and worker is not ordinary
++    assert worker._memory_store is None and worker._memory_manager is None
++    assert worker.kwargs["skip_context_files"] and worker.kwargs["skip_background_review"]
++    assert not worker.kwargs["load_soul_identity"] and worker.kwargs["prefill_messages"] is None
++    assert not {"memory", "session_search"} & _select_tool_names(
++        worker.enabled_toolsets, worker.disabled_toolsets, True,
++    )
++    assert turn._setup_stream_consumer("slack") == (None, None, None, False)
++
++    from agent import secret_scope
++    monkeypatch.setattr(secret_scope, "get_secret", lambda _key: None)
++    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {
++        "display": {"tool_progress": "all", "live_status": "full",
++                    "interim_assistant_messages": True, "thinking_progress": True},
++    })
++    display_runner = object.__new__(GatewayRunner)
++    display_runner._delivery_adapter_for = lambda _source: SimpleNamespace(
++        supports_status_text=True, native_task_cards_enabled=lambda: True,
++    )
++    display_runner._resolve_turn_toolsets = lambda *_args: (["memory"], None)
++    display = display_runner._run_agent_display_settings(source)
++    assert not display.tool_progress_enabled and not display.needs_progress_queue
++    assert not display.interim_assistant_messages_enabled and not display._thinking_enabled
++    assert display._live_status_adapter is None and not display._native_slack_task_cards
++
++    source.isolated_task = None
++    ordinary_again, reused = turn._resolve_turn_agent(route, "slack", "", 5, None, {})
++    assert not reused and ordinary_again._memory_store is not None

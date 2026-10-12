@@ -1,0 +1,50 @@
+diff --git a/hermes/agent/vault_store.py b/hermes/agent/vault_store.py
+--- a/hermes/agent/vault_store.py
++++ b/hermes/agent/vault_store.py
+@@ -11,8 +11,8 @@
+   file and vault file are created 0600 under ``<HERMES_HOME>/vault/``.
+ - Ported design (opaque-handle vault fill) from Merit-Systems/OpenInstinct
+   (MIT): lib/manager/server/secret-store.ts + vault services.
+-- Three item kinds: ``login`` (password-only secret), ``payment`` (card fields) and
+-  ``address``; ``PAYMENT_FIELDS`` / ``ADDRESS_FIELDS`` are the canonical payload names.
++- Item kinds: ``login``, ``api_key``, ``payment`` and ``address``;
++  ``PAYMENT_FIELDS`` / ``ADDRESS_FIELDS`` are the canonical payload names.
+ """
+ 
+ from __future__ import annotations
+@@ -32,7 +32,7 @@
+ from hermes_constants import get_hermes_home
+ from utils import atomic_write_bytes
+ 
+-VAULT_KINDS = ("login", "payment", "address")
++VAULT_KINDS = ("login", "api_key", "payment", "address")
+ 
+ LOGIN_IDENTIFIER_TYPES = ("email", "phone", "username")
+ 
+@@ -317,7 +317,8 @@
+         identifier fields are NOT secret — they are moved into item metadata
+         (the agent may see and type the identifier itself); only
+         ``password`` stays in the encrypted secret payload. ``payment`` and
+-        ``address`` payloads remain fully secret.
++        ``address`` payloads remain fully secret. ``api_key`` requires an HTTPS
++        origin and keeps the key entirely in the encrypted payload.
+         """
+         if kind not in VAULT_KINDS:
+             raise VaultError(f"unknown vault kind {kind!r} (expected one of {VAULT_KINDS})")
+@@ -345,6 +346,16 @@
+             # metadata and any stray origin echo is dropped.
+             otp_secret = normalize_otp_secret(str(secret.get("otp_secret") or ""))
+             secret = {"password": secret["password"], **({"otp_secret": otp_secret} if otp_secret else {})}
++        elif kind == "api_key":
++            if not origin:
++                raise VaultError("origin is required for API key items")
++            norm_origin = normalize_origin(origin)
++            if urlsplit(norm_origin).scheme != "https":
++                raise VaultError("API key items require an HTTPS origin")
++            key = secret.get("api_key")
++            if set(secret) != {"api_key"} or not isinstance(key, str) or not key.strip() or len(key) > 4096:
++                raise VaultError("API key items require only a nonempty API key")
++            secret = {"api_key": key}
+         else:
+             allowed = PAYMENT_FIELDS if kind == "payment" else ADDRESS_FIELDS
+             secret = {k: str(v) for k, v in secret.items() if k in allowed and str(v or "").strip()}

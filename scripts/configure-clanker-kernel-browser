@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Preview or apply the reviewed Kernel backend without restarting the gateway."""
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import uuid
+
+ROOT = Path(__file__).resolve().parents[1]
+PYTHON = ROOT / '.local/hermes-lab/venv/bin/python'
+if Path(sys.prefix).resolve() != (ROOT / '.local/hermes-lab/venv').resolve():
+    os.execv(str(PYTHON), [str(PYTHON), __file__, *sys.argv[1:]])
+sys.path[:0] = [str(ROOT / 'runtime'), str(ROOT / 'hermes')]
+
+from dotenv import dotenv_values, set_key
+from cloud_browser.kernel_client import COMMIT, PROVIDER_SHA256, validate_kernel_settings
+from gateway.status import live_gateway_pid_for_home
+from vault.store import AccessError
+from seatbelt.context import Context
+from seatbelt.install import activate_context, write
+
+
+def safe_target(home, path):
+    if not path.is_relative_to(home) or path.is_symlink():
+        raise ValueError('An installation target is outside the protected home or is a symlink.')
+    for parent in path.parents:
+        if parent == home:
+            break
+        if parent.is_symlink():
+            raise ValueError('An installation target contains a symlink.')
+
+
+def execution_homes(home):
+    fleet = home / '.clanker-execution'
+    settings = json.loads((fleet / 'fleet.json').read_text())
+    if (not isinstance(settings, dict) or settings.get('transport_home') != str(home)
+            or not isinstance(settings.get('activated'), bool)):
+        raise ValueError('Prepare a valid protected execution fleet before configuring Kernel.')
+    manifests = [home / '.clanker-execution/context.json']
+    manifests += sorted((home / 'profiles').glob('*/.clanker-execution/context.json'))
+    contexts = []
+    for manifest in manifests:
+        if not manifest.exists():
+            continue
+        target = manifest.parent.parent
+        safe_target(home, target / 'config.yaml')
+        value = json.loads(manifest.read_text())
+        if value.get('home') != str(target) or Path(value.get('fleet', '')).resolve() != fleet or value.get('enabled') is not True:
+            raise ValueError('An existing execution profile has unrelated ownership metadata.')
+        if not (target / 'config.yaml').is_file():
+            raise ValueError('An existing execution profile is missing its configuration.')
+        contexts.append(target)
+    if not contexts:
+        raise ValueError('No prepared execution contexts were found.')
+    return fleet, contexts
+
+
+def require_stopped(home):
+    message = 'Stop the gateway with zero active agents before changing the Kernel backend.'
+    try:
+        state = json.loads((home / 'gateway_state.json').read_text())
+    except (OSError, ValueError):
+        raise ValueError(message) from None
+    if (not isinstance(state, dict) or live_gateway_pid_for_home(home) is not None or state.get('gateway_state') != 'stopped'
+            or state.get('active_agents') != 0):
+        raise ValueError(message)
+
+
+def activation_pending(fleet):
+    return json.loads((fleet / 'fleet.json').read_text()).get('activated') is not True
+
+
+def validate_source(source):
+    provider = source / 'provider.py'
+    if hashlib.sha256(provider.read_bytes()).hexdigest() != PROVIDER_SHA256:
+        raise ValueError('The provider source differs from the reviewed Kernel plugin.')
+    commit = subprocess.run(['git', '-C', str(source), 'rev-parse', 'HEAD'],
+        capture_output=True, text=True, check=False)
+    if commit.returncode or commit.stdout.strip() != COMMIT:
+        raise ValueError('The plugin source is not at the reviewed pinned Git commit.')
+    return provider
+
+
+def changed_paths(home, contexts):
+    paths = [home / '.env', home / '.clanker-cloud/config.json',
+             home / '.clanker-cloud/vendor/kernel/provider.py']
+    for target in contexts:
+        paths += [target / name for name in ('config.yaml', '.clanker-execution/context.json',
+            'bin/browser-use', 'node/bin/agent-browser',
+            'plugins/clanker-seatbelt/plugin.yaml', 'plugins/clanker-seatbelt/__init__.py')]
+    for path in paths:
+        safe_target(home, path)
+    return paths
+
+
+def snapshot(home, paths):
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
+    backup = home / '.clanker-cloud/rollbacks' / stamp
+    backup.mkdir(mode=0o700, parents=True)
+    records = []
+    for path in paths:
+        relative = path.relative_to(home)
+        exists = path.is_file()
+        records.append({'path': str(relative), 'existed': exists})
+        if exists:
+            destination = backup / 'files' / relative
+            write(destination, path.read_text(), 0o600)
+    write(backup / 'manifest.json', json.dumps({'files': records}, indent=2) + '\n')
+    return backup, records
+
+
+def restore(home, backup, records):
+    for record in reversed(records):
+        target = home / record['path']
+        if record['existed']:
+            mode = 0o700 if record['path'].endswith(('bin/browser-use', 'bin/agent-browser')) else 0o600
+            write(target, (backup / 'files' / record['path']).read_text(), mode)
+        elif target.exists():
+            target.unlink()
+
+
+def restoration_plan(home, backup, paths):
+    backup = backup.expanduser().resolve(strict=True)
+    if not backup.is_relative_to(home / '.clanker-cloud/rollbacks'):
+        raise ValueError('The restore snapshot must belong to this protected gateway home.')
+    safe_target(home, backup / 'manifest.json')
+    manifest = json.loads((backup / 'manifest.json').read_text())
+    records = manifest.get('files') if isinstance(manifest, dict) else None
+    if not isinstance(records, list):
+        raise ValueError('The restore snapshot has no valid file manifest.')
+    allowed = {str(path.relative_to(home)) for path in paths}
+    seen = set()
+    for record in records:
+        if not isinstance(record, dict) or set(record) != {'path', 'existed'}:
+            raise ValueError('The restore snapshot has no valid file manifest.')
+        relative = record.get('path')
+        if relative not in allowed or relative in seen or not isinstance(record.get('existed'), bool):
+            raise ValueError('The restore snapshot contains an unrelated or duplicate file.')
+        seen.add(relative)
+        safe_target(home, home / relative)
+        if record['existed']:
+            saved = backup / 'files' / relative
+            safe_target(home, saved)
+            if not saved.is_file() or saved.stat().st_mode & 0o077:
+                raise ValueError('The restore snapshot is incomplete or its private files are exposed.')
+    if not {'.env', '.clanker-cloud/config.json'} <= seen:
+        raise ValueError('The restore snapshot has no complete backend configuration.')
+    by_path = {record['path']: record for record in records}
+    for relative in ('.env', '.clanker-cloud/config.json', '.clanker-cloud/vendor/kernel/provider.py'):
+        if relative not in by_path or not by_path[relative]['existed']:
+            raise ValueError('Restore requires a complete enabled Kernel backend snapshot.')
+    settings = json.loads((backup / 'files/.clanker-cloud/config.json').read_text())
+    validate_kernel_settings(settings)
+    expected_source = home / '.clanker-cloud/vendor/kernel'
+    if settings['plugin_commit'] != COMMIT or settings['plugin_path'] != str(expected_source):
+        raise ValueError('Restore requires the protected reviewed Kernel provider.')
+    saved_provider = backup / 'files/.clanker-cloud/vendor/kernel/provider.py'
+    if hashlib.sha256(saved_provider.read_bytes()).hexdigest() != PROVIDER_SHA256:
+        raise ValueError('The snapshot Kernel provider differs from the reviewed source.')
+    for relative, record in by_path.items():
+        if record['existed'] and relative.endswith(('bin/browser-use', 'node/bin/agent-browser')):
+            raise ValueError('Restore cannot reintroduce obsolete local browser wrappers.')
+    key = dotenv_values(backup / 'files/.env', interpolate=False).get('KERNEL_API_KEY')
+    if not isinstance(key, str) or not key.strip() or any(value in key for value in ('\n', '\r')):
+        raise ValueError('The snapshot has no valid private Kernel service key.')
+    return backup, records
+
+
+def restore_backend(home, fleet, contexts, paths, selected_backup, apply):
+    selected_backup, records = restoration_plan(home, selected_backup, paths)
+    result = {'mode': 'restore_apply' if apply else 'restore_preview', 'home': str(home),
+        'restore_snapshot': str(selected_backup), 'files_to_restore': len(records),
+        'execution_homes': [str(target) for target in contexts],
+        'activation_pending': activation_pending(fleet),
+        'provider_requests': 0, 'gateway_restarted': False}
+    if apply:
+        require_stopped(home)
+        for target in contexts:
+            Context(target).verify()
+        checkpoint, previous = snapshot(home, paths)
+        try:
+            restore(home, selected_backup, records)
+            if not result['activation_pending']:
+                for target in contexts:
+                    activate_context(target, fleet)
+        except Exception:
+            restore(home, checkpoint, previous)
+            raise ValueError('Backend restoration failed; the pre-restore configuration was recovered.') from None
+        result['rollback_snapshot'] = str(checkpoint)
+        write(checkpoint / 'receipt.json', json.dumps(result, indent=2) + '\n')
+    return result
+
+
+def merge_key(home, key):
+    envfile = home / '.env'
+    with tempfile.NamedTemporaryFile(mode='w', dir=home, prefix='.kernel-env-', delete=False) as stream:
+        temporary = Path(stream.name)
+        stream.write(envfile.read_text() if envfile.exists() else '')
+    try:
+        temporary.chmod(0o600)
+        set_key(str(temporary), 'KERNEL_API_KEY', key)
+        temporary.chmod(0o600)
+        os.replace(temporary, envfile)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def backend_settings(home, destination):
+    settings = {'enabled': True, 'provider': 'kernel', 'plugin_path': str(destination), 'plugin_commit': COMMIT}
+    path = home / '.clanker-cloud/config.json'
+    if path.exists():
+        previous = json.loads(path.read_text())
+        if previous.get('provider') == 'kernel':
+            validate_kernel_settings(previous)
+            if 'proxy' in previous:
+                settings['proxy'] = previous['proxy']
+    return settings
+
+
+def apply_backend(home, fleet, contexts, paths, provider, key, settings):
+    require_stopped(home)
+    for target in contexts:
+        Context(target).verify()
+    backup, records = snapshot(home, paths)
+    try:
+        write(home / '.clanker-cloud/vendor/kernel/provider.py', provider.read_text())
+        merge_key(home, key)
+        write(home / '.clanker-cloud/config.json', json.dumps(settings, indent=2) + '\n')
+        if not activation_pending(fleet):
+            for target in contexts:
+                activate_context(target, fleet)
+    except Exception:
+        restore(home, backup, records)
+        raise ValueError('Kernel configuration failed; affected configuration and secret files were restored.') from None
+    return backup
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--home', type=Path, default=ROOT / '.local/hermes-lab/home',
+        help='Protected gateway home with prepared execution contexts; applying requires a stopped gateway.')
+    parser.add_argument('--plugin-source', type=Path,
+        help='Reviewed Kernel plugin checkout at the pinned commit; no install or dependency changes.')
+    parser.add_argument('--key-env', type=Path,
+        help='Private .env file containing KERNEL_API_KEY; defaults to the protected backend .env.')
+    parser.add_argument('--apply', action='store_true',
+        help='Apply the preview, merge the private service key and snapshot affected files. Default only previews.')
+    parser.add_argument('--restore-backup', type=Path,
+        help='Preview restoring a snapshot created by this script; add --apply to restore it. No gateway restart.')
+    args = parser.parse_args()
+    os.umask(0o077)
+    try:
+        home = args.home.expanduser().resolve(strict=True)
+        if not (home / 'slack_membership.json').is_file() or not (home / '.clanker-vault/config.json').is_file():
+            raise ValueError('Configure Slack membership and the hosted vault first.')
+        fleet, contexts = execution_homes(home)
+        paths = changed_paths(home, contexts)
+        if args.restore_backup:
+            if args.plugin_source or args.key_env:
+                raise ValueError('Use --restore-backup without --plugin-source or --key-env.')
+            print(json.dumps(restore_backend(home, fleet, contexts, paths, args.restore_backup, args.apply), indent=2))
+            return
+        if args.plugin_source is None:
+            raise ValueError('Supply --plugin-source for Kernel configuration or --restore-backup for restoration.')
+        source = args.plugin_source.expanduser().resolve(strict=True)
+        provider = validate_source(source)
+        keyfile = (args.key_env or home / '.env').expanduser().resolve(strict=True)
+        if keyfile.stat().st_mode & 0o077:
+            raise ValueError('The private key file must have mode 0600 or stricter.')
+        key = dotenv_values(keyfile, interpolate=False).get('KERNEL_API_KEY')
+        if not isinstance(key, str) or not key.strip() or any(value in key for value in ('\n', '\r')):
+            raise ValueError('The private key file must contain a nonempty KERNEL_API_KEY.')
+        destination = home / '.clanker-cloud/vendor/kernel'
+        settings = backend_settings(home, destination)
+        result = {'mode': 'apply' if args.apply else 'preview', 'home': str(home),
+            'provider': 'kernel', 'plugin_commit': COMMIT, 'reviewed_provider_matches': True,
+            'execution_homes': [str(target) for target in contexts], 'backend_key_available': True,
+            'requester_env_keys_copied': False, 'profile_persistence': False,
+            'proxy_policy_preserved': 'proxy' in settings,
+            'activation_pending': activation_pending(fleet),
+            'local_fallback': False, 'provider_requests': 0, 'gateway_restarted': False}
+        if args.apply:
+            backup = apply_backend(home, fleet, contexts, paths, provider, key, settings)
+            result['rollback_snapshot'] = str(backup)
+            write(backup / 'receipt.json', json.dumps(result, indent=2) + '\n')
+        del key
+        print(json.dumps(result, indent=2))
+    except (ValueError, AccessError) as error:
+        parser.error(str(error))
+    except (OSError, RuntimeError, KeyError):
+        # File and subprocess exception text can contain private .env content.
+        parser.error('Kernel configuration validation or application failed. Check the protected home, accepted fleet, reviewed plugin source and private key file; no key was printed.')
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,177 @@
+--- a/hermes/plugins/platforms/slack/adapter.py
++++ b/hermes/plugins/platforms/slack/adapter.py
+@@ -53,9 +53,11 @@
+ try:  # sibling module; support both package and flat plugin-dir import
+     from .block_kit import render_blocks, sanitize_blocks
+     from .message_edits import MessageEdits
++    from .reply_target import addressed_reply
+ except ImportError:  # pragma: no cover - plugin loaded outside package context
+     from block_kit import render_blocks, sanitize_blocks  # type: ignore
+     from message_edits import MessageEdits
++    from reply_target import addressed_reply
+ 
+ 
+ logger = logging.getLogger(__name__)
+@@ -2273,10 +2275,11 @@
+                 return await self._send_slash_reply(chat_id, slash_ctx, content, metadata)
+             # An active native stream that this content finalizes IS the final
+             # message: seal it instead of posting a duplicate.
+-            stream_result = (await self._try_finalize_stream(chat_id, content)
++            stream_result = (await self._try_finalize_stream(chat_id, content, metadata)
+                              if not (metadata or {}).get("_interim_send") else None)
+             if stream_result is not None:
+                 return stream_result
++            content = self._address_reply(chat_id, content, metadata)
+             formatted = self.format_message(content)
+             if not formatted or not formatted.strip():
+                 # Slack returns ``no_text`` for blank posts; still the end of a
+@@ -2479,6 +2482,8 @@
+         if blocked:
+             return blocked
+         try:
++            if finalize:
++                content = self._address_reply(chat_id, content, metadata)
+             formatted = self.format_message(content)
+             # chat.update has postMessage's ~40k limit but cannot split, so truncate to fit
+             # (an oversized payload fails the whole edit with ``msg_too_long``).
+@@ -2657,7 +2662,13 @@
+                 "[Slack] chat.stopStream failed for %s/%s: %s", chat_id, stream.get("ts"), e)
+             return False
+ 
+-    async def _try_finalize_stream(self, chat_id: str, content: str) -> Optional[SendResult]:
++    def _address_reply(self, chat_id: str, content: str, metadata=None) -> str:
++        if not self._extra_flag("mention_reply_user"):
++            return content
++        return addressed_reply(content, chat_id, (metadata or {}).get("user_id"))
++
++    async def _try_finalize_stream(
++        self, chat_id: str, content: str, metadata=None) -> Optional[SendResult]:
+         """Seal the active native stream if ``content`` is its final text: SendResult when the
+         stream IS the final message; None when unrelated (interim commentary), leaving it open."""
+         stream = self._active_streams.get(chat_id)
+@@ -2675,6 +2686,11 @@
+         if not ok:
+             # Stop failed — post normally; the dangling stream times out on Slack's side.
+             return None
++        # Preserve append-only draft frames, then address the completed message
++        # by editing the sealed stream, as the rich Block Kit path already does.
++        addressed = self._address_reply(chat_id, text, metadata)
++        if addressed != text:
++            return await self.edit_message(chat_id, ts, addressed, finalize=True, metadata=metadata)
+         # Streams render markdown natively; rich blocks are applied via
+         # chat_update on the sealed message (mirrors edit_message finalize).
+         blocks = self._maybe_blocks(text)
+--- a/hermes/gateway/slack_workspace.py
++++ b/hermes/gateway/slack_workspace.py
+@@ -27,6 +27,7 @@
+     "display.tool_progress_command": False,
+     "display.platforms.slack.busy_ack_detail": False,
+     "display.platforms.slack.live_status": "off",
++    "gateway.platforms.slack.mention_reply_user": True,
+     "onboarding.enabled": False,
+     "onboarding.profile_build": "off",
+     "clanker.public_web.enabled": True,
+--- /dev/null
++++ b/hermes/plugins/platforms/slack/reply_target.py
+@@ -0,0 +1,15 @@
++"""Address shared replies using the turn's authenticated Slack user ID."""
++
++import re
++
++
++def addressed_reply(content: str, chat_id: str, user_id: str) -> str:
++    # DMs need no ping. Destination and sender IDs come from transport routing,
++    # never a generated name, model argument or mutable per-channel sender cache.
++    if (not content.strip() or not str(chat_id).startswith(("C", "G"))
++            or not re.fullmatch(r"[UW][A-Z0-9]+", str(user_id or ""))
++            or user_id == "USLACKBOT"):
++        return content
++    if re.search(r"<@" + re.escape(user_id) + r"(?:\|[^>]+)?>", content):
++        return content
++    return f"<@{user_id}> {content}"
+--- /dev/null
++++ b/hermes/tests/gateway/test_slack_reply_recipient_mentions.py
+@@ -0,0 +1,83 @@
++"""Shared Slack replies address the authenticated turn sender without a DM ping."""
++
++from unittest.mock import AsyncMock, MagicMock
++
++import pytest
++
++from gateway.config import PlatformConfig
++from gateway.platforms.base import Platform
++from gateway.run import GatewayRunner, _profile_runtime_scope
++from gateway.session import SessionSource
++from plugins.platforms.slack.adapter import SlackAdapter
++
++
++def _adapter():
++    adapter = SlackAdapter(PlatformConfig(enabled=True, extra={"mention_reply_user": True}))
++    adapter._app = MagicMock()
++    client = AsyncMock()
++    client.chat_postMessage.return_value = {"ts": "123.456"}
++    client.chat_startStream.return_value = {"ts": "123.457"}
++    adapter._get_client = MagicMock(return_value=client)
++    adapter.stop_typing = AsyncMock()
++    return adapter, client
++
++
++@pytest.mark.asyncio
++async def test_shared_thread_uses_each_turn_sender_across_profiles_and_dm_has_no_ping(tmp_path):
++    adapter, client = _adapter()
++    runner = object.__new__(GatewayRunner)
++    homes = [tmp_path / "alice", tmp_path / "bob"]
++    for home in homes:
++        home.mkdir()
++    metadata = []
++    for home, user in ((homes[0], "U123ABC"), (homes[1], "U456DEF"), (homes[0], "U123ABC")):
++        with _profile_runtime_scope(home):
++            source = SessionSource(platform=Platform.SLACK, chat_id="C123SHARED",
++                                   chat_type="group", thread_id="123.000", user_id=user,
++                                   scope_id="T123TEAM", message_id="123.100")
++            metadata.append(runner._thread_metadata_for_source(source))
++    # Build every turn's metadata before delivery: a later sender cannot overwrite an earlier one.
++    for meta in metadata:
++        result = await adapter.send("C123SHARED", "The form is in your DM.", metadata=meta)
++        assert result.success
++        assert client.chat_postMessage.await_args.kwargs["text"].startswith(f'<@{meta["user_id"]}> ')
++
++    meta = metadata[0]
++    content = "<@U123ABC> I checked with <@U456DEF>."
++    await adapter.send("C123SHARED", content, metadata=meta)
++    assert client.chat_postMessage.await_args.kwargs["text"] == content
++    await adapter.edit_message("C123SHARED", "123.456", content, finalize=True, metadata=meta)
++    assert client.chat_update.await_args.kwargs["text"] == content
++    await adapter.send("C123SHARED", "I checked with <@U456DEF>.", metadata=meta)
++    assert client.chat_postMessage.await_args.kwargs["text"] == "<@U123ABC> I checked with <@U456DEF>."
++    adapter.config.extra["rich_blocks"] = True
++    await adapter.send("C123SHARED", "Ready.", metadata=meta)
++    payload = client.chat_postMessage.await_args.kwargs
++    assert payload["text"] == "<@U123ABC> Ready."
++    assert "<@U123ABC>" in str(payload["blocks"])
++    adapter.config.extra["rich_blocks"] = False
++    await adapter.send("D123PRIVATE", "Please share your details here.", metadata=meta)
++    assert client.chat_postMessage.await_args.kwargs["text"] == "Please share your details here."
++    await adapter.edit_message("D123PRIVATE", "123.456", "Received.", finalize=True, metadata=meta)
++    assert client.chat_update.await_args.kwargs["text"] == "Received."
++    for user in (None, "@alice", "U123> <!channel>"):
++        await adapter.send("C123SHARED", "Ready.", metadata={"user_id": user})
++        assert client.chat_postMessage.await_args.kwargs["text"] == "Ready."
++    adapter.config.extra["mention_reply_user"] = False
++    await adapter.send("C123SHARED", "Ready.", metadata=meta)
++    assert client.chat_postMessage.await_args.kwargs["text"] == "Ready."
++
++
++@pytest.mark.asyncio
++async def test_native_stream_keeps_prefix_stable_then_addresses_final_by_edit():
++    adapter, client = _adapter()
++    meta = {"thread_id": "123.000", "user_id": "U123ABC"}
++    await adapter.send_draft("C123SHARED", 1, "I checked", metadata=meta)
++    await adapter.send_draft("C123SHARED", 1, "I checked the form.", metadata=meta)
++    assert client.chat_startStream.await_args.kwargs["markdown_text"] == "I checked"
++    assert client.chat_appendStream.await_args.kwargs["markdown_text"] == " the form."
++    result = await adapter.send("C123SHARED", "I checked the form. It is ready.", metadata=meta)
++    assert result.success and result.message_id == "123.457"
++    assert client.chat_stopStream.await_args.kwargs["markdown_text"] == " It is ready."
++    assert client.chat_update.await_args.kwargs["text"] == "<@U123ABC> I checked the form. It is ready."
++    client.chat_postMessage.assert_not_awaited()

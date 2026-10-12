@@ -1,0 +1,26 @@
+# Benchmark replay preparation
+
+## Finding
+
+The requested evidence campaign must repeat all twelve unchanged benchmark tasks only after the repair campaign honestly completes all twelve. No evidence campaign has started, no replay is enabled, and no Slack screenshot has been captured for it.
+
+Kernel's current [replay documentation](https://www.kernel.sh/docs/browsers/replays) supports explicit session recording, separate start/stop segments, and MP4 download. The official [Python SDK wire contract](https://github.com/kernel/kernel-python-sdk/blob/main/src/kernel/resources/browsers/replays.py) uses POST `/browsers/{id}/replays`, POST `/browsers/{id}/replays/{replay_id}/stop`, and GET `/browsers/{id}/replays/{replay_id}`. Its options include a duration bound and disabling audio. These sources were checked on 2026-10-11. The documentation calls replay-view URLs sensitive; none are retained in result metadata.
+
+Neither source documents an authentication-redaction guarantee. A browser restored from an authenticated profile can display private values before its first tool call. Native autofill can precede the Vault fill boundary. Managed Auth uses a separate browser and does not pass through the ordinary fill guard; ordinary private values may also be returned to the model for later native typing. Stopping recording after a DOM inspection cannot undo already-recorded frames. A single pre-fill hook therefore does not establish safe capture.
+
+## Change
+
+`runtime/cloud_browser/kernel_replay.py` is standalone preparation, with no production import, browser hook, model tool, CLI command, or activation setting written by this change.
+
+- `ReplayPlan` is off when the protected backend's `benchmark-replays.json` is absent or disabled. An enabled manifest must be owned by the process user, private to that user, bounded in size and lifetime, and match the exact team, requester, Slack channel, thread root, browser context and provider session. Current ownership is checked against the existing authoritative browser-owner registry. A tester identity or profile alone is insufficient, so concurrent ordinary sessions cannot enter a campaign accidentally.
+- Even a valid exact match returns `capture_allowed: false`, reason `auth_exclusion_unavailable`. No manifest flag can override this. Authentication, saved-access and restored-profile sessions remain uncaptured. A future safe boundary needs a separate implementation and review before any runtime capture can start.
+- The isolated `ReplayAPI` adapter implements the documented wire contract for synthetic tests. Start is video-only at 10fps, with an explicit duration from 1 to 600 seconds. Mutations never automatically retry. An invalid or lost start response is an unknown outcome, not proof that recording did not begin; no second start should be attempted until reconciled. A failed stop is not completion. The provider duration bound limits such a recording, but is not a privacy guarantee.
+- Export streams a bounded MP4 response into a private temporary file and publishes a new immutable local artifact only after successful completion. Redirects are refused. Failed, malformed or oversized downloads leave no partial artifact. Existing artifacts and symlinks are not overwritten. Export returns only a local path, byte count and SHA-256; capability URLs, headers and raw provider error text are excluded.
+
+The [evidence table](../verification/2026-10-11-benchmark-evidence.md) preserves all twelve initial prompts and the required four columns. Every run ID and artifact is pending. Future Slack images must show the actual exact thread in Aside, with thread identity checked before capture. Exclude auth cards and access links before taking a screenshot; no synthetic conversation rendering or invented screenshot may substitute for Slack evidence. An unavailable safe screenshot or replay stays explicitly unavailable. Authentication intervals are never silently presented as complete coverage.
+
+## Validation and limits
+
+The new test file was first run before the module existed and failed collection with `ModuleNotFoundError`; after implementation its initial 14 checks passed through the canonical runner. Expanded replay, existing Kernel browser and client suites passed 158 checks, with eight existing strict expected failures requiring the retired local secret store. After adding the interrupted-export regression, the final focused run passed all 27 replay checks. The unchanged sibling suites had 75 client and 57 browser passes. Tests use synthetic transport only, real local ownership/state fixtures for two owners, and temporary artifact paths. They do not contact Kernel, start recording, alter a live browser, or establish real MP4 playback acceptance.
+
+No changes were needed in `kernel.py` or shared Vault/auth files. No credential was read, no private form opened, and no live evidence claimed. The original `docs/CLANKER_BENCHMARK.md` was not modified. The full benchmark is not made recordable by this preparation: safe browser replay remains blocked until authentication exclusion can be proven before capture. For now the eventual table must report that limitation instead of publishing a potentially sensitive video.

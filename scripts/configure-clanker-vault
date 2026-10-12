@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Configure Clanker's hosted access form; does not deploy or restart the gateway."""
+import argparse
+import getpass
+import json
+import os
+from pathlib import Path
+import re
+import sys
+from urllib.parse import urlsplit
+
+ROOT=Path(__file__).resolve().parents[1]
+PYTHON=ROOT/'.local/hermes-lab/venv/bin/python'
+if Path(sys.prefix).resolve()!=(ROOT/'.local/hermes-lab/venv').resolve():
+    os.execv(str(PYTHON),[str(PYTHON),__file__,*sys.argv[1:]])
+sys.path[:0]=[str(ROOT/'runtime'),str(ROOT/'hermes')]
+from seatbelt.install import write
+from dotenv import dotenv_values,set_key
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--home',type=Path,default=ROOT/'.local/hermes-lab/home',help='Protected gateway home, containing the Slack membership registry.')
+    parser.add_argument('--public-url',required=True,help='HTTPS website origin; configure its /auth/callback in the Slack app first.')
+    parser.add_argument('--client-id',required=True,help='Slack app client ID (public); client secret is entered without echo at the terminal.')
+    parser.add_argument('--port',type=int,default=8767,help='Loopback HTTP port for the HTTPS reverse proxy; default 8767.')
+    args=parser.parse_args()
+    url=urlsplit(args.public_url)
+    if url.scheme!='https' or not url.hostname or url.username or url.path not in ('','/') or url.query or url.fragment:
+        parser.error('--public-url must be an HTTPS website origin')
+    if not 1024<=args.port<=65535:parser.error('--port must be between 1024 and 65535')
+    if not re.fullmatch(r'[0-9]+\.[0-9]+',args.client_id):parser.error('Enter the Slack app client ID from Basic Information.')
+    home=args.home.expanduser().resolve(strict=True)
+    membership=json.loads((home/'slack_membership.json').read_text())
+    if not membership.get('workspace_id'):parser.error('This gateway has no configured Slack workspace.')
+    envfile=home/'.env'
+    existing=dotenv_values(envfile).get('CLANKER_SLACK_CLIENT_SECRET')
+    if not existing:
+        if not sys.stdin.isatty():parser.error('Run in an interactive terminal to enter the client secret securely.')
+        secret=getpass.getpass('Slack app client secret (hidden): ').strip()
+        if not re.fullmatch(r'[a-fA-F0-9]{32}',secret):parser.error('The Slack client secret must be the 32-character value from Basic Information.')
+        envfile.touch(mode=0o600,exist_ok=True);envfile.chmod(0o600)
+        set_key(str(envfile),'CLANKER_SLACK_CLIENT_SECRET',secret)
+        envfile.chmod(0o600);del secret
+    settings={'enabled':True,'public_url':args.public_url.rstrip('/'),'client_id':args.client_id,'port':args.port}
+    write(home/'.clanker-vault/config.json',json.dumps(settings,indent=2)+'\n')
+    print('Hosted access configured. Gateway has not been restarted.')
+    print('Slack sign-in callback: '+settings['public_url']+'/auth/callback')
+    print('HTTPS reverse-proxy target: http://127.0.0.1:'+str(args.port))
+    print('After verifying Slack OIDC and HTTPS, restart with scripts/hermes-lab gateway run -v --replace.')
+
+
+if __name__=='__main__':main()

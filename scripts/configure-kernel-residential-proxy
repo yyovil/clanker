@@ -1,0 +1,378 @@
+#!/usr/bin/env python3
+"""Preview or configure one India residential proxy; never restart the gateway.
+
+Default preview performs authenticated reads only. Apply may create the stable
+named proxy and check its health, then changes only the protected Kernel config.
+A durable dispatch marker prevents repeating an unacknowledged create request.
+"""
+import argparse
+from contextlib import contextmanager
+from datetime import datetime, timezone
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import tempfile
+import uuid
+
+ROOT = Path(__file__).resolve().parents[1]
+PYTHON = ROOT / '.local/hermes-lab/venv/bin/python'
+if Path(sys.prefix).resolve() != (ROOT / '.local/hermes-lab/venv').resolve():
+    os.execv(str(PYTHON), [str(PYTHON), __file__, *sys.argv[1:]])
+sys.path[:0] = [str(ROOT / 'runtime'), str(ROOT / 'hermes')]
+
+from dotenv import dotenv_values
+import requests
+from cloud_browser.kernel_client import API_URL, validate_kernel_settings, validate_proxy_policy
+from gateway.status import live_gateway_pid_for_home
+from vault.store import AccessError
+
+NAME = 'clanker-india-residential'
+CREATE = {'name': NAME, 'type': 'residential', 'config': {'country': 'IN'}}
+INTENT = 'residential-proxy.intent.json'
+BACKUPS = 'proxy-rollbacks'
+
+
+class ProxyError(Exception):
+    """An operator-safe error that never contains a remote response body."""
+
+
+def fail(message):
+    raise ProxyError(message)
+
+
+def digest(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+def encoded(value):
+    return (json.dumps(value, indent=2, sort_keys=True) + '\n').encode()
+
+
+def safe_path(home, path):
+    if not path.is_relative_to(home) or path.is_symlink():
+        fail('A protected path is outside the gateway home or is a symlink.')
+    for parent in path.parents:
+        if parent == home:
+            break
+        if parent.is_symlink():
+            fail('A protected path contains a symlink.')
+
+
+def private_file(home, path):
+    safe_path(home, path)
+    if not path.is_file() or path.stat().st_mode & 0o077:
+        fail('A required protected file is absent or its permissions are exposed.')
+    return path.read_bytes()
+
+
+def private_write(home, path, value):
+    safe_path(home, path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+@contextmanager
+def operator_lock(home):
+    path = home / '.clanker-cloud/residential-proxy.operator.lock'
+    safe_path(home, path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        if os.fstat(fd).st_mode & 0o077:
+            fail('The protected operator lock permissions are exposed.')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fail('Another residential-proxy operator is already running.')
+        yield
+    finally:
+        os.close(fd)
+
+
+def quiescence(home):
+    status = json.loads(private_file(home, home / 'gateway_state.json'))
+    if (live_gateway_pid_for_home(home) is not None or
+            status.get('gateway_state') != 'stopped' or status.get('active_agents') != 0):
+        fail('Stop the gateway completely with active_agents exactly zero before applying.')
+
+
+class KernelAPI:
+    def __init__(self, key, http=None):
+        self.key = key
+        self.http = http if http is not None else requests.Session()
+        self.http.trust_env = False
+        self.requests = {'GET': 0, 'POST': 0}
+
+    def request(self, method, path, *, body=None, params=None):
+        self.requests[method] += 1
+        kwargs = {'headers': {'Authorization': 'Bearer ' + self.key},
+                  'timeout': 20, 'allow_redirects': False}
+        if body is not None:
+            kwargs['json'] = body
+        if params is not None:
+            kwargs['params'] = params
+        try:
+            response = getattr(self.http, method.lower())(API_URL + path, **kwargs)
+        except requests.RequestException:
+            fail('Kernel request was not acknowledged. No response details or credential were printed.')
+        expected = (200, 201) if method == 'POST' and path == '/proxies' else (200,)
+        if response.status_code not in expected:
+            fail('Kernel request failed with HTTP ' + str(response.status_code) + '; redirects are not followed.')
+        try:
+            return response.json()
+        except ValueError:
+            fail('Kernel returned an invalid JSON response; no response body was printed.')
+
+    def entitlements(self):
+        value = self.request('GET', '/org/entitlements')
+        features = value.get('features') if isinstance(value, dict) else None
+        managed = features.get('managed_proxies') if isinstance(features, dict) else None
+        if not isinstance(managed, dict) or managed.get('enabled') is not True:
+            fail('Kernel managed proxies are not enabled for this organization.')
+
+    def proxies(self):
+        rows, seen = [], set()
+        for offset in range(0, 10000, 100):
+            page = self.request('GET', '/proxies', params={'limit': 100, 'offset': offset})
+            if not isinstance(page, list) or len(page) > 100:
+                fail('Kernel proxy pagination returned an unsupported response.')
+            for row in page:
+                if (not isinstance(row, dict) or not safe_id(row.get('id')) or
+                        not isinstance(row.get('name'), str) or row['id'] in seen):
+                    fail('Kernel proxy pagination omitted identities or repeated a record.')
+                seen.add(row['id'])
+                rows.append(row)
+            if len(page) < 100:
+                return rows
+        fail('Kernel proxy pagination was incomplete; creation is blocked.')
+
+
+def safe_id(value):
+    return isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,200}', value) is not None
+
+
+def verify_proxy(row, proxy_id, *, named=False, available=False):
+    policy = validate_proxy_policy({'id': proxy_id, 'type': 'residential', 'country': 'IN'})
+    config = row.get('config') if isinstance(row, dict) else None
+    if (not isinstance(row, dict) or row.get('id') != policy['id'] or
+            row.get('type') != 'residential' or not isinstance(config, dict) or
+            not isinstance(config.get('country'), str) or config['country'].upper() != 'IN' or
+            any(value for key, value in config.items() if key != 'country') or
+            row.get('bypass_hosts') or (named and row.get('name') != NAME)):
+        fail('Proxy identity, residential country or complete routing policy could not be verified.')
+    if available and row.get('status') != 'available':
+        fail('The India residential proxy is unavailable; the backend configuration was not changed.')
+    return policy
+
+
+def load_intent(home):
+    path = home / '.clanker-cloud' / INTENT
+    safe_path(home, path)
+    if not path.exists():
+        return None
+    value = json.loads(private_file(home, path))
+    if (not isinstance(value, dict) or value.get('version') != 1 or
+            value.get('home') != str(home) or value.get('api_origin') != API_URL or
+            value.get('name') != NAME or value.get('request_sha256') != digest(encoded(CREATE)) or
+            value.get('state') not in ('dispatch_pending', 'acknowledged') or
+            ('proxy_id' in value and not safe_id(value['proxy_id']))):
+        fail('The protected proxy creation marker is unrelated or invalid.')
+    return value
+
+
+def select_proxy(api, rows, settings, explicit_id, intent):
+    named = [row for row in rows if row['name'] == NAME]
+    if len(named) > 1:
+        fail('The stable residential proxy name is not unique; no proxy was selected or created.')
+    if intent:
+        if not named:
+            fail('A previous proxy creation was not acknowledged. No matching named proxy is visible; creation will not be repeated.')
+        if intent.get('proxy_id') and named[0]['id'] != intent['proxy_id']:
+            fail('The recovered named proxy differs from the acknowledged creation marker.')
+        if explicit_id and explicit_id != named[0]['id']:
+            fail('An outstanding creation marker must be reconciled with its exact named proxy.')
+        proxy_id = named[0]['id']
+    else:
+        proxy_id = explicit_id or settings.get('proxy', {}).get('id') or (named[0]['id'] if named else None)
+    if proxy_id is None:
+        return None
+    if not safe_id(proxy_id) or sum(row['id'] == proxy_id for row in rows) != 1:
+        fail('The configured or selected proxy ID is absent from the complete current proxy list.')
+    row = api.request('GET', '/proxies/' + proxy_id)
+    verify_proxy(row, proxy_id, named=bool(intent) or not (explicit_id or settings.get('proxy')))
+    return row
+
+
+def create_proxy(home, api):
+    marker = {'version': 1, 'home': str(home), 'api_origin': API_URL, 'name': NAME,
+              'request_sha256': digest(encoded(CREATE)), 'state': 'dispatch_pending',
+              'created_at': datetime.now(timezone.utc).isoformat()}
+    private_write(home, home / '.clanker-cloud' / INTENT, encoded(marker))
+    # No retries, including when the response or acknowledgement is lost.
+    row = api.request('POST', '/proxies', body=CREATE)
+    proxy_id = row.get('id') if isinstance(row, dict) else None
+    if not safe_id(proxy_id):
+        fail('Kernel did not acknowledge a proxy identity. The protected dispatch marker blocks duplicate creation.')
+    verify_proxy(row, proxy_id, named=True)
+    marker.update(state='acknowledged', proxy_id=proxy_id)
+    private_write(home, home / '.clanker-cloud' / INTENT, encoded(marker))
+    return row
+
+
+def snapshot(home, before, after, receipt):
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
+    backup = home / '.clanker-cloud' / BACKUPS / stamp
+    saved = {'version': 1, 'home': str(home), 'file': '.clanker-cloud/config.json',
+             'kind': 'kernel-residential-proxy-config', 'proxy_id': receipt['proxy_id'],
+             'before_sha256': digest(before), 'after_sha256': digest(after)}
+    private_write(home, backup / 'before.json', before)
+    private_write(home, backup / 'receipt.json', encoded(saved))
+    return backup
+
+
+def configure(home, *, apply=False, proxy_id=None, http=None, stopped=quiescence):
+    config_path = home / '.clanker-cloud/config.json'
+    before = private_file(home, config_path)
+    settings = validate_kernel_settings(json.loads(before))
+    if proxy_id is not None and not safe_id(proxy_id):
+        fail('The selected proxy ID is invalid.')
+    key_path = home / '.env'
+    private_file(home, key_path)
+    key = dotenv_values(key_path, interpolate=False).get('KERNEL_API_KEY')
+    if not isinstance(key, str) or not key.strip() or any(value in key for value in ('\n', '\r')):
+        fail('The protected backend .env must contain a nonempty Kernel service key.')
+    api = KernelAPI(key, http)
+    if apply:
+        stopped(home)
+    api.entitlements()
+    rows = api.proxies()
+    intent = load_intent(home)
+    selected = select_proxy(api, rows, settings, proxy_id, intent)
+    receipt = {'success': True, 'mode': 'apply' if apply else 'preview',
+               'home': str(home), 'managed_proxies_enabled': True,
+               'proxy_list_complete': True, 'proxy_records': len(rows),
+               'proxy_name': NAME, 'country': 'IN', 'type': 'residential',
+               'would_create': selected is None, 'proxy_created': False,
+               'recovered_creation_marker': bool(intent), 'health_check_performed': False,
+               'config_changed': False, 'gateway_restarted': False,
+               'browser_create_delete': False, 'proxy_deleted': False, 'slack_messages_sent': False}
+    if selected is None and apply:
+        stopped(home)
+        if config_path.read_bytes() != before:
+            fail('The protected backend configuration changed during verification; nothing was applied.')
+        selected = create_proxy(home, api)
+        receipt['proxy_created'] = True
+    elif selected and intent and apply and intent.get('proxy_id') != selected['id']:
+        intent.update(state='acknowledged', proxy_id=selected['id'])
+        private_write(home, home / '.clanker-cloud' / INTENT, encoded(intent))
+    if selected:
+        selected_id = selected['id']
+        if apply:
+            check = api.request('POST', '/proxies/' + selected_id + '/check', body={})
+            verify_proxy(check, selected_id, available=True)
+            selected = api.request('GET', '/proxies/' + selected_id)
+            receipt['health_check_performed'] = True
+        policy = verify_proxy(selected, selected_id, available=apply)
+        receipt.update(proxy_id=selected_id, proxy_status=selected.get('status'),
+                       health_available=selected.get('status') == 'available')
+        updated = dict(settings, proxy=policy)
+        after = encoded(updated)
+        if apply:
+            stopped(home)
+            if config_path.read_bytes() != before:
+                fail('The protected backend configuration changed during verification; nothing was applied.')
+            if settings != updated:
+                backup = snapshot(home, before, after, receipt)
+                private_write(home, config_path, after)
+                receipt.update(config_changed=True, rollback_snapshot=str(backup),
+                               before_sha256=digest(before), after_sha256=digest(after))
+    receipt['provider_requests'] = api.requests
+    return receipt
+
+
+def restore(home, backup, *, apply=False, stopped=quiescence):
+    root = home / '.clanker-cloud' / BACKUPS
+    backup = backup.expanduser()
+    safe_path(home, backup)
+    backup = backup.resolve(strict=True)
+    safe_path(home, backup)
+    if not backup.is_relative_to(root) or backup.parent != root:
+        fail('The restore snapshot must belong to this command and protected gateway home.')
+    receipt = json.loads(private_file(home, backup / 'receipt.json'))
+    restored = private_file(home, backup / 'before.json')
+    path = home / '.clanker-cloud/config.json'
+    current = private_file(home, path)
+    if (not isinstance(receipt, dict) or receipt.get('version') != 1 or
+            receipt.get('home') != str(home) or receipt.get('file') != '.clanker-cloud/config.json' or
+            receipt.get('kind') != 'kernel-residential-proxy-config' or
+            receipt.get('before_sha256') != digest(restored) or
+            receipt.get('after_sha256') != digest(current)):
+        fail('The restore snapshot is unrelated, damaged or the backend configuration changed afterward.')
+    validate_kernel_settings(json.loads(restored))
+    result = {'success': True, 'mode': 'restore_apply' if apply else 'restore_preview',
+              'home': str(home), 'restore_snapshot': str(backup), 'config_changed': apply,
+              'gateway_restarted': False, 'provider_requests': {'GET': 0, 'POST': 0},
+              'browser_create_delete': False, 'proxy_deleted': False, 'slack_messages_sent': False}
+    if apply:
+        stopped(home)
+        if path.read_bytes() != current:
+            fail('The protected backend configuration changed after restore validation.')
+        private_write(home, path, restored)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--home', type=Path, default=ROOT / '.local/hermes-lab/home',
+                        help='Protected owning gateway home; credentials stay in its mode-0600 .env.')
+    parser.add_argument('--proxy-id', help='Adopt an existing residential India proxy ID instead of the stable named proxy.')
+    parser.add_argument('--apply', action='store_true',
+                        help='Create/check the selected proxy and atomically update config; requires a fully stopped gateway with zero active agents.')
+    parser.add_argument('--restore-backup', type=Path,
+                        help='Preview a SHA-checked config rollback from this command; add --apply to restore. Remote proxies remain intact.')
+    args = parser.parse_args()
+    os.umask(0o077)
+    try:
+        if args.home.expanduser().is_symlink():
+            fail('The protected gateway home must not be a symlink.')
+        home = args.home.expanduser().resolve(strict=True)
+        if args.restore_backup and args.proxy_id:
+            fail('Use --restore-backup without --proxy-id.')
+        def run():
+            if args.restore_backup:
+                return restore(home, args.restore_backup, apply=args.apply)
+            return configure(home, apply=args.apply, proxy_id=args.proxy_id)
+        if args.apply:
+            with operator_lock(home):
+                result = run()
+        else:
+            result = run()
+        print(json.dumps(result, indent=2))
+    except (ProxyError, AccessError) as error:
+        parser.exit(1, json.dumps({'success': False, 'error': str(error)}) + '\n')
+    except (OSError, ValueError, KeyError, TypeError, requests.RequestException):
+        parser.exit(1, json.dumps({'success': False, 'error':
+            'Protected residential-proxy validation failed. No credential, response body or private capability was printed.'}) + '\n')
+
+
+if __name__ == '__main__':
+    main()

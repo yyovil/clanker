@@ -1,0 +1,206 @@
+diff --git a/hermes/tests/tools/test_browser_command_timeout_outcome.py b/hermes/tests/tools/test_browser_command_timeout_outcome.py
+new file mode 100644
+--- /dev/null
++++ b/hermes/tests/tools/test_browser_command_timeout_outcome.py
+@@ -0,0 +1,74 @@
++"""A dispatched timeout is uncertain, private, and must never be retried."""
++import json
++import logging
++from pathlib import Path
++import subprocess
++
++import pytest
++
++from tools import browser_tool as browser
++from tools import browser_tool_session as session
++
++
++@pytest.mark.parametrize('private', [False, True])
++def test_cloud_timeout_discards_partial_output_and_never_falls_back(tmp_path, monkeypatch, caplog, private):
++    task = 'uncertain-command'
++    record = {'session_name': 'uncertain-client', 'cdp_url': 'wss://fixture.invalid/cdp',
++              'bb_session_id': 'fixture-remote', 'features': {}}
++    monkeypatch.setattr(browser, '_active_sessions', {task: record})
++    monkeypatch.setattr(browser, '_last_active_session_key', {})
++    monkeypatch.setattr(session, '_browser_command_preflight', lambda: {'browser_cmd': 'agent-browser'})
++    monkeypatch.setattr(session, '_get_session_info', lambda _: browser._active_sessions[task])
++    monkeypatch.setattr(session._cloud, '_get_browser_engine', lambda: 'lightpanda')
++    monkeypatch.setattr(session._cdp, '_ensure_cdp_supervisor', lambda _: None)
++    stopped = []
++    monkeypatch.setattr(session._cdp, '_stop_cdp_supervisor', lambda value: stopped.append(value))
++    monkeypatch.setattr(session, '_prepare_session_socket_dir', lambda _: str(tmp_path))
++    monkeypatch.setattr(session, '_ensure_screen_for_headed_chromium', lambda: None)
++    monkeypatch.setattr(session, '_agent_browser_command_env', lambda _: {})
++    monkeypatch.setattr(session._lp, '_lightpanda_fallback_reason',
++                        lambda *_: pytest.fail('A dispatched timeout must not replay through Chrome'))
++    attempts = []
++    partial = 'synthetic-private-partial-output-92814'
++
++    class Process:
++        def wait(self, timeout=None):
++            if timeout is not None:
++                raise subprocess.TimeoutExpired('agent-browser', timeout)
++        def kill(self): pass
++
++    def spawn(_argv, _env, directory, tag, _stdin=None):
++        attempts.append(tag)  # Models the first external side effect before timeout.
++        Path(directory, '_stdout_' + tag).write_text(partial)
++        Path(directory, '_stderr_' + tag).write_text(partial)
++        return Process()
++
++    monkeypatch.setattr(session, '_popen_agent_browser', spawn)
++    with caplog.at_level(logging.DEBUG):
++        result = session._run_browser_command(task, 'type', ['@e1', 'hello'], timeout=3,
++                                              _private_output=private)
++    assert result['success'] is False
++    assert result['code'] == 'browser_command_outcome_unknown'
++    assert browser._active_sessions[task]['_command_timed_out'] is True
++    assert browser._active_sessions[task]['bb_session_id'] == 'fixture-remote'
++    assert attempts == ['type'] and stopped == [task]
++    assert partial not in json.dumps(result) + caplog.text
++    assert not list(tmp_path.glob('_std*'))
++
++
++@pytest.mark.parametrize('requested', [None, 3, 120])
++def test_character_dispatch_budget_preempts_upstream_socket_retry(monkeypatch, requested):
++    budgets = []
++    monkeypatch.setattr(browser, '_safe_command_timeout', lambda: 60)
++    monkeypatch.setattr(session, '_browser_command_preflight', lambda: {'browser_cmd': 'agent-browser'})
++    monkeypatch.setattr(session, '_get_session_info', lambda _: {'features': {}})
++    def dispatch(_task, _record, _binary, command, args, budget, _engine, **kwargs):
++        budgets.append((command, budget))
++        return 'chrome', {'success': True}
++    monkeypatch.setattr(session, '_dispatch_browser_command', dispatch)
++    assert session._run_browser_command('fixture', 'type', ['@e1', 'short'], timeout=requested)['success']
++    assert 0 < budgets[0][1] < 30  # The upstream client resends at its 30-second socket timeout.
++    if requested == 3:
++        assert budgets[0][1] == requested
++    assert session._run_browser_command('fixture', 'fill', ['@e1', 'long' * 1000], timeout=requested)['success']
++    assert budgets[1][1] == (60 if requested is None else requested)
+diff --git a/hermes/tests/tools/test_browser_type_modes.py b/hermes/tests/tools/test_browser_type_modes.py
+--- a/hermes/tests/tools/test_browser_type_modes.py
++++ b/hermes/tests/tools/test_browser_type_modes.py
+@@ -60,6 +60,21 @@
+     assert private_flags == [False, True, False]
+ 
+ 
++def test_long_character_input_refuses_before_clear_while_atomic_fill_remains_available(monkeypatch):
++    calls = []
++    def native(*args, **kwargs):
++        calls.append(args)
++        return {'success': True, 'data': {'value': ''}}
++    monkeypatch.setattr(session, '_run_browser_command', native)
++    text = 'document paragraph\n' * 100
++    result = dispatch(ref='e3', text=text, mode='type')
++    assert result['success'] is False and result['code'] == 'character_typing_too_long'
++    assert 'not cleared' in result['error'] and "mode='fill'" in result['error']
++    assert calls == []
++    assert dispatch(ref='e3', text=text, mode='fill')['success'] is True
++    assert calls == [('typing-fixture', 'fill', ['@e3', text])]
++
++
+ @pytest.mark.parametrize("mode", ["append", "", None, [], {}, 0])
+ def test_invalid_mode_refuses_before_browser_transport(monkeypatch, mode):
+     def unexpected(*_args):
+diff --git a/hermes/tools/browser_tool.py b/hermes/tools/browser_tool.py
+--- a/hermes/tools/browser_tool.py
++++ b/hermes/tools/browser_tool.py
+@@ -510,7 +510,7 @@
+     },
+     {
+         "name": "browser_type",
+-        "description": "Enter text in an input field identified by its ref ID. Both modes request replacement of existing text. mode='fill' (default) fills directly. mode='type' attempts to clear, confirms the field is empty, then inserts characters incrementally. Verify that the form accepts the result. Requires browser_navigate and browser_snapshot to be called first.",
++        "description": f"Enter text in an input field identified by its ref ID. Both modes request replacement of existing text. mode='fill' (default) fills directly and is required for long text. mode='type' accepts at most {_session.MAX_CHARACTER_TYPE_LENGTH} characters, attempts to clear, confirms the field is empty, then inserts characters incrementally. Verify that the form accepts the result. Requires browser_navigate and browser_snapshot to be called first.",
+         "parameters": {
+             "type": "object",
+             "properties": {
+@@ -523,7 +523,7 @@
+                 },
+                 "mode": {
+                     "type": "string", "enum": ["fill", "type"], "default": "fill",
+-                    "description": "Request direct fill (default), or incremental input after confirming an empty field. Verify application acceptance."
++                    "description": f"Request direct fill (default; use for long text), or incremental input of at most {_session.MAX_CHARACTER_TYPE_LENGTH} characters after confirming an empty field. Verify application acceptance."
+                 }
+             },
+             "required": ["ref", "text"]
+@@ -899,6 +899,12 @@
+     """Replace the element's text by filling or clearing then typing characters."""
+     if mode not in ("fill", "type"):
+         return _dumps(_err("Invalid typing mode. Use 'fill' or 'type'."))
++    if mode == "type" and len(text) > _session.MAX_CHARACTER_TYPE_LENGTH:
++        return _dumps(_err(
++            f"Character typing accepts at most {_session.MAX_CHARACTER_TYPE_LENGTH} characters. "
++            "Use mode='fill' for long text, then verify the editor accepted it. "
++            "This request was not dispatched and the field was not cleared.",
++            code="character_typing_too_long"))
+     if _is_camofox_mode():
+         if mode == "type":
+             return _dumps(_err("Character typing is unavailable in this browser backend."))
+diff --git a/hermes/tools/browser_tool_session.py b/hermes/tools/browser_tool_session.py
+--- a/hermes/tools/browser_tool_session.py
++++ b/hermes/tools/browser_tool_session.py
+@@ -30,6 +30,17 @@
+                                  f"to get the bundled Chromium: {_DOCKER_PULL}")
+ _CHROMIUM_MISSING_HINT = f"Chromium browser is missing. Install it with: {_CHROMIUM_INSTALL}"
+ _PRIVATE_OUTPUT_ERROR = "The private browser check could not be confirmed."
++# agent-browser 0.31.1 types via one awaited CDP request per character and
++# resends after a 30-second socket read timeout. Keep character input bounded
++# and stop its client before that retry; a larger process budget is unsafe.
++MAX_CHARACTER_TYPE_LENGTH = 256
++_CHARACTER_TYPE_TIMEOUT = 25
++_COMMAND_OUTCOME_UNKNOWN = (
++    "Browser command timed out after dispatch. The action may have partially completed; "
++    "its outcome is unknown. Do not repeat it or restart sign-in. Take a fresh "
++    "browser_snapshot in this same task to inspect the existing browser, then reconcile "
++    "the actual result before making another change."
++)
+ 
+ 
+ # THE Chromium startup flags for a host where its sandbox cannot work; agent-browser gets them through
+@@ -435,6 +446,9 @@
+             replacement = dict(session_info)
+             replacement["session_name"] = f"h_{uuid.uuid4().hex[:10]}"
+             replacement.pop("_first_nav", None)
++            # Host-only provenance: the owning runtime must not mistake the
++            # removed supervisor for a missing login or expose partial output.
++            replacement["_command_timed_out"] = True
+             _bt._active_sessions[task_id] = replacement
+         else:
+             _bt._active_sessions.pop(task_id, None)
+@@ -681,12 +695,15 @@
+         stdout, stderr = _read_command_output_files(stdout_path, stderr_path)
+         _unlink_command_output_files(stdout_path, stderr_path)
+         _handle_browser_command_timeout(task_id, session_info, task_socket_dir)
+-        if stderr and stderr.strip() and not _private_output:
++        cloud_command = bool(session_info.get("bb_session_id") or session_info.get("cdp_url"))
++        if stderr and stderr.strip() and not (_private_output or cloud_command):
+             _bt.logger.warning("browser '%s' stderr after timeout: %s", command, stderr.strip()[:500])
+         _bt.logger.warning("browser '%s' timed out after %ds (task=%s, socket_dir=%s)",
+                        command, timeout, task_id, task_socket_dir)
+-        return {"success": False, "error": _PRIVATE_OUTPUT_ERROR if _private_output else
+-                _format_browser_timeout_error(command, timeout, stdout, stderr)}
++        return {"success": False, "code": "browser_command_outcome_unknown",
++                "error": _PRIVATE_OUTPUT_ERROR if _private_output else
++                (_COMMAND_OUTCOME_UNKNOWN if cloud_command else
++                 _format_browser_timeout_error(command, timeout, stdout, stderr))}
+     with open(stdout_path, "r", encoding="utf-8") as f:
+         stdout = f.read()
+     with open(stderr_path, "r", encoding="utf-8") as f:
+@@ -813,6 +830,8 @@
+     for this call only (Lightpanda fallback retries with Chrome without touching global state)."""
+     if timeout is None:
+         timeout = _bt._safe_command_timeout()
++    if command == "type":
++        timeout = min(timeout, _CHARACTER_TYPE_TIMEOUT)
+     args = args or []
+ 
+     try:
+@@ -844,7 +863,7 @@
+                 raise
+             _bt.logger.warning("Private browser command could not be dispatched")
+             return {"success": False, "error": _PRIVATE_OUTPUT_ERROR}
+-        if result.get("code") == "human_has_control":
++        if result.get("code") in {"human_has_control", "browser_command_outcome_unknown"}:
+             return result
+         if _private_output:
+             # A clear-confirmation read must keep its exact target and private

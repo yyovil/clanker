@@ -1,0 +1,170 @@
+diff --git a/hermes/gateway/run_turn.py b/hermes/gateway/run_turn.py
+--- a/hermes/gateway/run_turn.py
++++ b/hermes/gateway/run_turn.py
+@@ -1947,6 +1947,9 @@
+                 # adapter's ordinary error reply if persistence/publication fails.
+                 logger.warning("Isolated task reply remains pending: task=%s", isolated.task_id)
+             return None
++        from gateway.private_access_response import private_access_response_owned
++        if private_access_response_owned(self, event, source, agent_result):
++            return None
+         if diagnostic_wake_muted(event):
+             return None
+         # Intentional silence is a delivery decision: the [SILENT] turn stays persisted (alternation).
+@@ -3760,12 +3763,17 @@
+                 logger.debug("Stream consumer wait before queued message failed: %s", e)
+         # Delivery uses the finalized task result (empty/failure normalization), not raw ``result``.
+         _delivery_result = response if isinstance(response, dict) else (result or {})
+-        first_response = _delivery_result.get("final_response", "")
+-        _already_streamed = self._run_agent_stream_confirmed_final_delivery(
++        from gateway.private_access_response import (
++            private_access_response_pending, private_access_response_successful,
++        )
++        _private_access_owned = (private_access_response_successful(_delivery_result) and
++            private_access_response_pending(turn_ctx.source, getattr(turn_ctx, 'inbound_message_id', None)))
++        first_response = "" if _private_access_owned else _delivery_result.get("final_response", "")
++        _already_streamed = False if _private_access_owned else self._run_agent_stream_confirmed_final_delivery(
+             _sc, first_response, previewed=bool(_delivery_result.get("response_previewed")),
+         )
+         # Same silence predicate as the normal path, else this branch leaks the literal marker.
+-        if self._is_intentional_silence(_delivery_result, first_response):
++        if not _private_access_owned and self._is_intentional_silence(_delivery_result, first_response):
+             if is_machinery_display_kind(turn_ctx.persist_user_display_kind):
+                 logger.info(
+                     "Queued follow-up for session %s: suppressing intentional silence marker before continuing.",
+@@ -4049,6 +4057,12 @@
+         record) keeps legacy trust."""
+         _sc, source, session_key = turn_ctx.stream_consumer_holder[0], turn_ctx.source, turn_ctx.session_key
+         if not isinstance(response, dict) or response.get("failed"):
++            return
++        from gateway.private_access_response import (
++            private_access_response_pending, private_access_response_successful,
++        )
++        if (private_access_response_successful(response) and
++                private_access_response_pending(source, getattr(turn_ctx, 'inbound_message_id', None))):
+             return
+         _final = response.get("final_response") or ""
+         _is_empty_sentinel = not _final or _final == "(empty)"
+diff --git a/hermes/gateway/run_turn_runner.py b/hermes/gateway/run_turn_runner.py
+--- a/hermes/gateway/run_turn_runner.py
++++ b/hermes/gateway/run_turn_runner.py
+@@ -25,6 +25,9 @@
+ from gateway.config import Platform
+ from gateway.media_repair import repair_explicit_computer_use_media_paths
+ from gateway.platforms.base import BasePlatformAdapter
++from gateway.private_access_response import (
++    private_access_response_pending, private_access_response_successful,
++)
+ from gateway.turn_context import TurnContext
+ from hermes_cli.config import cfg_get
+ from utils import is_truthy_value
+@@ -971,12 +974,14 @@
+         stream_delta_cb = None
+         if delta_sinks:
+             def stream_delta_cb(text: Optional[str]) -> None:
+-                if ctx._run_still_current():
++                if (ctx._run_still_current() and not
++                        private_access_response_pending(ctx.source, getattr(ctx, 'inbound_message_id', None))):
+                     for sink in delta_sinks:
+                         sink.on_delta(text)
+ 
+         def interim_assistant_cb(text: str, *, already_streamed: bool = False) -> None:
+-            if not ctx._run_still_current():
++            if (not ctx._run_still_current() or
++                    private_access_response_pending(ctx.source, getattr(ctx, 'inbound_message_id', None))):
+                 return
+             if stts is not None:
+                 # Flush accepted deltas; completed commentary is a separate speech segment.
+@@ -1772,6 +1777,12 @@
+             )
+         ctx.result_holder[0] = result
+         if stream_consumer is None:
++            return
++        if (isinstance(result, dict) and private_access_response_successful(result)
++                and private_access_response_pending(ctx.source, getattr(ctx, 'inbound_message_id', None))):
++            # Keep earlier commentary, but never replace it with a second notice
++            # after the backend has delivered this turn's private sign-in card.
++            stream_consumer.finish()
+             return
+         # Pass final_response as the authoritative finalize payload: it includes post-stream
+         # augmentation (verifier footer, explainer) the accumulator never saw. Adopt ONLY a genuinely
+diff --git a/hermes/gateway/private_access_response.py b/hermes/gateway/private_access_response.py
+new file mode 100644
+--- /dev/null
++++ b/hermes/gateway/private_access_response.py
+@@ -0,0 +1,75 @@
++"""Backend-confirmed private access cards own their current Slack turn's reply."""
++from dataclasses import dataclass
++import logging
++
++from gateway.config import Platform
++
++logger = logging.getLogger("gateway.run")
++
++
++def _source_key(source):
++    return tuple(getattr(source, key, None) for key in
++                 ('platform', 'scope_id', 'user_id', 'chat_id', 'thread_id', 'profile'))
++
++
++@dataclass(frozen=True)
++class _PrivateAccessResponse:
++    event_id: str
++    source_key: tuple
++    pending: bool = True
++
++
++def mark_private_access_response(source, event_id):
++    """Latch only after the backend confirms its committed current-turn card.
++
++    The typed receipt stays process-local; source serialization cannot create it.
++    Delta callbacks can check it without querying storage for each token.
++    """
++    source._private_access_response = _PrivateAccessResponse(event_id, _source_key(source))
++
++
++def _current_receipt(source, event_id):
++    receipt = getattr(source, '_private_access_response', None)
++    if (isinstance(event_id, str) and event_id and isinstance(receipt, _PrivateAccessResponse)
++            and receipt.event_id == event_id and receipt.source_key == _source_key(source)):
++        return receipt
++    return None
++
++
++def private_access_response_pending(source, event_id):
++    receipt = _current_receipt(source, event_id)
++    return receipt is not None and receipt.pending
++
++
++def release_private_access_response(source, event_id):
++    """An explicit authenticated result lets this exact turn continue normally."""
++    source._private_access_response = _PrivateAccessResponse(event_id, _source_key(source), False)
++
++
++def private_access_response_successful(agent_result):
++    return (not any(agent_result.get(key) for key in ('failed', 'error', 'interrupted', 'partial'))
++            and agent_result.get('completed') is not False)
++
++
++def private_access_response_owned(runner, event, source, agent_result):
++    """Suppress ordinary delivery only when the configured backend owns this reply."""
++    if (source.platform != Platform.SLACK or source.chat_type not in {'dm', 'private'}
++            or source.is_bot or not private_access_response_successful(agent_result)):
++        return False
++    event_id = getattr(event, 'ledger_message_id', None) or event.message_id
++    receipt = _current_receipt(source, event_id)
++    if receipt is not None and not receipt.pending:
++        return False
++    from gateway.slack_workspace import workspace_policy
++
++    policy = workspace_policy(runner, source)
++    service = getattr(policy, 'vault_service', None)
++    owns_reply = getattr(service, 'private_link_response_owned', None)
++    if not callable(owns_reply):
++        return False
++    try:
++        return owns_reply(source, event_id) is True
++    except Exception:
++        # Storage or routing uncertainty cannot justify hiding an ordinary reply.
++        logger.warning("Private access response ownership could not be confirmed")
++        return False

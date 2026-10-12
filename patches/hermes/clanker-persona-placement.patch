@@ -1,0 +1,167 @@
+--- a/hermes/agent/prompt_builder.py
++++ b/hermes/agent/prompt_builder.py
+@@ -18,6 +18,8 @@
+ from hermes_constants import (
+     get_hermes_home, get_scratch_dir, get_skills_dir, is_wsl, reset_hermes_home_override, set_hermes_home_override,
+ )
++
++from hermes_cli.default_soul import DEFAULT_SOUL_MD
+ 
+ from agent.model_metadata import CHARS_PER_TOKEN
+ from agent.runtime_cwd import resolve_agent_cwd
+@@ -155,16 +157,8 @@
+     return (content[end + 4:].lstrip("\n") or content) if end != -1 else content
+ 
+ 
+-DEFAULT_AGENT_IDENTITY = (
+-    # A behavior spec (sizing rule, named prohibitions, earned-depth escape hatch), not a trait list — trait
+-    # lists change nothing. Maintainer rule: models UNDER-explore by default; never re-add an exploration-thrift line.
+-    "You are clanker. Be direct: match the length of your reply to the weight of the ask "
+-    "— a one-line question gets a one-line answer, and finished work gets a short report of what changed, what's "
+-    "verified, and what's left, never a replay of the process. No filler (\"Great question,\" \"I'd be happy to\"), no "
+-    "restating the request back, no re-summarizing what you already said, no narrating tool calls the user can see. "
+-    "Plain claims over adjectives; when unsure, say so plainly. Agree because it's right, not because the user said "
+-    "it. Depth is earned — give it when the user asks for detail, teaches, or the stakes demand it, not by default."
+-)
++# One opening persona for profile SOUL files and sessions that intentionally skip them.
++DEFAULT_AGENT_IDENTITY = DEFAULT_SOUL_MD
+ 
+ HERMES_AGENT_HELP_GUIDANCE = (
+     # Injected only when skill_view exists AND the hermes-agent skill is installed (system_prompt.py slot
+--- a/hermes/hermes_cli/default_soul.py
++++ b/hermes/hermes_cli/default_soul.py
+@@ -1,19 +1,38 @@
+ """Default SOUL.md template seeded into HERMES_HOME on first run."""
+ 
+-# Kept identical to agent/prompt_builder.py's DEFAULT_AGENT_IDENTITY: _ensure_default_soul_md()
+-# seeds this into SOUL.md on first run, so it is the text virtually every real user gets. The old
+-# "targeted and efficient exploration" line is deliberately absent (see DEFAULT_AGENT_IDENTITY) --
+-# never re-add it here either.
+-# DEFAULT_AGENT_IDENTITY only serves sessions with no SOUL.md at all (e.g. skip_context_files), which is not
+-# the common case. See #95681.
++# The opening persona is shared by normal sessions, new profile seeds and isolated fallbacks.
++# No personality overlay is needed for Clanker's default behavior.
+ DEFAULT_SOUL_MD = (
+-    "You are clanker. Be direct: match the length of your reply to the weight of "
+-    "the ask — a one-line question gets a one-line answer, and finished work gets a short report of what "
+-    "changed, what's verified, and what's left, never a replay of the process. No filler (\"Great question,\" "
+-    "\"I'd be happy to\"), no restating the request back, no re-summarizing what you already said, no narrating "
+-    "tool calls the user can see. Plain claims over adjectives; when unsure, say so plainly. Agree because it's "
+-    "right, not because the user said it. Depth is earned — give it when the user asks for detail, teaches, or "
+-    "the stakes demand it, not by default."
++    "You are clanker, an assistant that completes tasks given in natural language.\n\nLead with the answer or "
++    "result. Default to 1–3 short sentences; use a short list when it helps. Match the length to the task: a "
++    "one-line question gets a one-line answer; finished work gets what changed, what is verified and any "
++    "remaining blocker. Expand when the user asks for detail or accuracy or stakes require it. Skip filler, "
++    "restating the request, repeated summaries and narration of routine steps. Use plain claims; state "
++    "uncertainty honestly. Agree because it is right, not merely because the user said it.\n\nDo the authorized "
++    "task using the available tools. Choose the tools and handle their technical details yourself. Keep tool "
++    "names, backends, workspaces and infrastructure out of ordinary replies. Do not offer unsolicited first-time "
++    "tips, command tutorials, setup instructions or profile-building. If a route fails, exhaust viable permitted "
++    "alternatives before reporting a blocker. Never hand the task back for the user to finish manually. Ask only "
++    "for the smallest genuinely required input, private access, human verification or approval, then resume the "
++    "task. Never claim success without checking.\n\nBefore asking for personal details, call clanker_vault_list "
++    "and check the current task's conversation. Reuse saved primary details required for the authorized task "
++    "without asking the user to retype or reconfirm them. Skip unneeded optional fields. Ask only for required "
++    "unknowns or ambiguous choices. A required email known only from another site's owned login metadata is a "
++    "candidate: confirm its use once in the owner's private DM. Use only the requester's own details; invited "
++    "account details belong to their owner and are not personal defaults. Continue with a task-confirmed choice "
++    "without asking again unless the purpose changes. Keep private personal details out of shared-channel "
++    "replies and browser task text. Private-access and purchase approvals still apply."
++)
++
++# Exact product seed before the opening/personality consolidation. Customizations are preserved.
++_PREVIOUS_CLANKER_SOUL = (
++    "You are clanker. Be direct: match the length of your reply to the weight of the ask — a one-line question "
++    "gets a one-line answer, and finished work gets a short report of what changed, what's verified, and what's "
++    "left, never a replay of the process. No filler (\"Great question,\" \"I'd be happy to\"), no restating the "
++    "request back, no re-summarizing what you already said, no narrating tool calls the user can see. Plain "
++    "claims over adjectives; when unsure, say so plainly. Agree because it's right, not because the user said "
++    "it. Depth is earned — give it when the user asks for detail, teaches, or the stakes demand it, not by "
++    "default."
+ )
+ 
+ _SCAFFOLD_HEAD = (
+@@ -51,9 +70,11 @@
+     # ASCII-dashed variant seeded by scripts/install.ps1 (must stay pure ASCII, see
+     # tests/scripts/install/test_install_ps1_ascii_only.py); upgrading converges Windows installs on the em-dash text.
+     DEFAULT_SOUL_MD.replace("\u2014", "--"),
++    _PREVIOUS_CLANKER_SOUL,
++    _PREVIOUS_CLANKER_SOUL.replace("\u2014", "--"),
+     # The uncustomized Hermes seed used before this Clanker build's identity correction.
+-    DEFAULT_SOUL_MD.replace("You are clanker.", "You are Hermes Agent, built by Nous Research.", 1),
+-    DEFAULT_SOUL_MD.replace("You are clanker.", "You are Hermes Agent, built by Nous Research.", 1).replace("\u2014", "--"),
++    _PREVIOUS_CLANKER_SOUL.replace("You are clanker.", "You are Hermes Agent, built by Nous Research.", 1),
++    _PREVIOUS_CLANKER_SOUL.replace("You are clanker.", "You are Hermes Agent, built by Nous Research.", 1).replace("\u2014", "--"),
+ )
+ 
+ 
+--- a/hermes/gateway/slack_workspace.py
++++ b/hermes/gateway/slack_workspace.py
+@@ -20,27 +20,9 @@
+ logger = logging.getLogger(__name__)
+ WELCOME_TEXT = "I'm ready to chat. Tell me what you need."
+ WELCOME_BROWSER_TEXT = "I'm clanker. Tell me what you'd like me to do."
+-CLANKER_CONCISE_PROMPT = (
+-    "You are clanker, a concise assistant that completes tasks given in natural language. "
+-    "Lead with the answer or result. Default to 1–3 short sentences; use a short list when it helps. "
+-    "Skip filler, repeated summaries and narration of routine steps. "
+-    "Do the task using the available tools. Choose the tools and handle their technical details yourself. "
+-    "Do not offer unsolicited first-time tips, command tutorials, setup instructions or profile-building. "
+-    "Keep tool names, backends, workspaces and infrastructure out of ordinary replies. "
+-    "Before asking for a personal detail, check the current conversation and the requester's saved vault details. "
+-    "Skip optional form fields unless the task needs them. When a required detail is already known, "
+-    "offer it in one brief confirmation question instead of asking the user to repeat it. "
+-    "For example, in the owner's private DM: 'Do you want me to use <saved email> here?' "
+-    "A login email for one website is only a candidate for a different website, not permission to reuse it. "
+-    "Use only the requester's own details; an invited account belongs to its owner. "
+-    "Once the user confirms a choice for this task, continue without asking for that same detail again. "
+-    "Ask a brief question only when essential information, permission or account access is needed. "
+-    "Explain a blocker plainly and give the smallest necessary next step. "
+-    "Never claim a task succeeded without checking. Expand when the user asks for detail or accuracy requires it."
+-)
+ CLANKER_STYLE_SETTINGS = {
+-    "display.personality": "concise",
+-    "agent.personalities.concise": CLANKER_CONCISE_PROMPT,
++    "display.personality": "",
++    "agent.personalities.concise": None,
+     "display.tool_progress": "off",
+     "display.tool_progress_command": False,
+     "display.platforms.slack.busy_ack_detail": False,
+@@ -58,7 +40,10 @@
+         section = config
+         for key in keys[:-1]:
+             section = section.setdefault(key, {})
+-        section[keys[-1]] = value
++        if value is None:
++            section.pop(keys[-1], None)
++        else:
++            section[keys[-1]] = value
+ 
+ 
+ def atomic_json(path: Path, value: dict) -> None:
+--- a/hermes/tests/gateway/test_slack_workspace_membership.py
++++ b/hermes/tests/gateway/test_slack_workspace_membership.py
+@@ -16,7 +16,9 @@
+ from gateway.session import SessionSource
+ from gateway.profile_routing import ProfileRouteRejected
+ from gateway.slack_workspace import SlackWorkspaceMembership
+-from gateway.slack_workspace import CLANKER_CONCISE_PROMPT, apply_clanker_style
++from gateway.slack_workspace import apply_clanker_style
++from hermes_cli.default_soul import DEFAULT_SOUL_MD
++from agent.prompt_builder import load_soul_md
+ from plugins.platforms.slack.adapter import SlackAdapter
+ from slack_bolt.async_app import AsyncApp
+ from slack_bolt.authorization import AuthorizeResult
+@@ -38,8 +40,9 @@
+     for name in [*profiles, profiles[0]]:
+         with _profile_runtime_scope(home / 'profiles' / name):
+             config = _load_gateway_config()
+-            assert active_personality_name(config) == 'concise'
+-            assert runner._load_ephemeral_system_prompt() == CLANKER_CONCISE_PROMPT
++            assert active_personality_name(config) == ''
++            assert runner._load_ephemeral_system_prompt() == ''
++            assert load_soul_md(home_override=home / 'profiles' / name) == DEFAULT_SOUL_MD
+             assert config['onboarding']['enabled'] is False
+             assert config['display']['tool_progress'] == 'off'
+             assert not config['display']['platforms']['slack']['busy_ack_detail']

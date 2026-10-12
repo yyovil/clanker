@@ -1,0 +1,21 @@
+diff --git a/hermes/gateway/slack_workspace.py b/hermes/gateway/slack_workspace.py
+--- a/hermes/gateway/slack_workspace.py
++++ b/hermes/gateway/slack_workspace.py
+@@ -394,7 +394,16 @@
+ 
+         if source.scope_id != self.team or source.is_bot or not self.authorize_sender(source.user_id, source.chat_id):
+             raise ProfileRouteRejected("slack-workspace-membership")
+-        profile = self.state["conversations"][source.chat_id]["profile"]
++        if getattr(source, 'isolated_task', None) is not None:
++            service = getattr(self, 'vault_service', None)
++            if service is None:
++                raise ProfileRouteRejected('slack-workspace-task-unavailable')
++            try:
++                profile = service.channel_tasks.execution_route(source)
++            except Exception as error:
++                raise ProfileRouteRejected('slack-workspace-task-unauthorized') from error
++        else:
++            profile = self.state["conversations"][source.chat_id]["profile"]
+         home = (self.adapter.gateway_runner._served_profile_homes or {}).get(profile)
+         expected = self.home if profile == "default" else self.home / "profiles" / profile
+         if home is None or Path(home).resolve() != expected.resolve() or not expected.is_dir():

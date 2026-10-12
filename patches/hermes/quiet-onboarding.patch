@@ -1,0 +1,52 @@
+--- a/hermes/gateway/run_turn.py
++++ b/hermes/gateway/run_turn.py
+@@ -1412,6 +1412,10 @@
+         the session has no history). Delivered on the user message (sidecar), NOT the ephemeral
+         system prompt: present-on-turn-1/absent-on-turn-2 was a guaranteed prompt diff + rebuild."""
+         from gateway.run import _hermes_home, _home_target_env_var, _load_gateway_config
++        from hermes_cli.config import cfg_get
++        from utils import is_truthy_value
++        if not is_truthy_value(cfg_get(_load_gateway_config(), "onboarding", "enabled"), default=True):
++            return
+         if history:
+             return
+         if not await self.async_session_store.has_any_sessions():
+--- a/hermes/gateway/run_busy.py
++++ b/hermes/gateway/run_busy.py
+@@ -745,7 +745,10 @@
+         # One-time onboarding hint about the queue/interrupt knob (flag persisted to config.yaml).
+         try:
+             from agent.onboarding import (BUSY_INPUT_FLAG, busy_input_hint_gateway, is_seen, mark_seen)
+-            if not is_seen(_load_gateway_config(), BUSY_INPUT_FLAG):
++            from hermes_cli.config import cfg_get
++            from utils import is_truthy_value
++            cfg = _load_gateway_config()
++            if is_truthy_value(cfg_get(cfg, "onboarding", "enabled"), default=True) and not is_seen(cfg, BUSY_INPUT_FLAG):
+                 _hint_mode = (
+                     "steer" if is_steer_mode
+                     else "queue" if is_queue_mode
+--- a/hermes/gateway/run_turn_runner.py
++++ b/hermes/gateway/run_turn_runner.py
+@@ -220,6 +220,8 @@
+             if (kwargs.get("duration") or 0) >= ctx._LONG_TOOL_THRESHOLD_S and ctx.progress_mode == "all":
+                 from agent.onboarding import TOOL_PROGRESS_FLAG, is_seen, mark_seen, tool_progress_hint_gateway
+                 cfg = _load_gateway_config()
++                if not is_truthy_value(cfg_get(cfg, "onboarding", "enabled"), default=True):
++                    return
+                 gate_on = is_truthy_value(cfg_get(cfg, "display", "tool_progress_command"), default=False)
+                 if gate_on and not is_seen(cfg, TOOL_PROGRESS_FLAG):
+                     ctx.long_tool_hint_fired[0] = True
+--- a/hermes/website/docs/user-guide/configuration.md
++++ b/hermes/website/docs/user-guide/configuration.md
+@@ -3030,8 +3030,11 @@
+ 
+ First-touch onboarding hints and the structured profile-build offer:
+ 
++Set `onboarding.enabled: false` to disable gateway first-contact introductions, home-channel setup prompts, and first-time busy-input/tool-progress tips. Normal task results, clarification and permission requests still work.
++
+ ```yaml
+ onboarding:
++  enabled: true         # false disables gateway introductions and first-time tips
+   profile_build: "ask"   # "ask" (default) | "off"
+   seen: {}               # internal latch — leave empty
+ ```

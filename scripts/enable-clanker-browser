@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Verify Kernel-only browser routing and accept the terminal sandbox while stopped."""
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import uuid
+
+ROOT = Path(__file__).resolve().parents[1]
+PYTHON = ROOT / '.local/hermes-lab/venv/bin/python'
+if Path(sys.prefix).resolve() != PYTHON.parent.parent.resolve():
+    os.execv(str(PYTHON), [str(PYTHON), __file__, *sys.argv[1:]])
+sys.path[:0] = [str(ROOT / 'runtime'), str(ROOT / 'hermes')]
+from cloud_browser.kernel_client import client_for
+from gateway.status import live_gateway_pid_for_home
+from seatbelt.context import HERE, Context, atomic_json
+from seatbelt.install import activate_context, install_context, write
+from seatbelt.retired_browsers import stop_owned_local_browsers
+from vault.store import RequestStore
+
+
+def enable(home):
+    home = home.resolve(strict=True)
+    state = json.loads((home / 'gateway_state.json').read_text())
+    if (live_gateway_pid_for_home(home) is not None or state.get('gateway_state') != 'stopped'
+            or state.get('active_agents') != 0):
+        raise RuntimeError('Stop the gateway with zero active agents before enabling Kernel-only execution.')
+    # Validate the pinned provider and protected configuration before mutations.
+    client_for(home)
+    fleet = home / '.clanker-execution'
+    before = (fleet / 'fleet.json').read_bytes()
+    settings = json.loads(before)
+    homes = [home] + sorted(p for p in (home / 'profiles').iterdir()
+                            if (p / '.clanker-execution/context.json').is_file())
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
+    backup = home / '.clanker-execution/kernel-only-backups' / stamp
+    write(backup / 'fleet.json', before.decode())
+    for index, target in enumerate(homes):
+        for relative in ('config.yaml', 'bin/browser-use', 'node/bin/agent-browser'):
+            path = target / relative
+            if path.is_file():
+                write(backup / str(index) / relative, path.read_text())
+    stopped = sum(stop_owned_local_browsers(target) for target in homes)
+    retired = ('bu_venv', 'bu_python', 'browser_use_executable', 'chromium_executable',
+               'chromium_bundle', 'chromium_policy_sha256', 'chromium_outer_sandbox_only')
+    for name in retired:
+        settings.pop(name, None)
+    settings.update(policy_sha256=hashlib.sha256((HERE / 'common.sb').read_bytes()).hexdigest(),
+                    activated=False, browser_provider='kernel')
+    atomic_json(fleet / 'fleet.json', settings)
+    for target in homes:
+        install_context(target, fleet)
+    settings['activated'] = True
+    atomic_json(fleet / 'fleet.json', settings)
+    for target in homes:
+        activate_context(target, fleet)
+    store = RequestStore(home / '.clanker-vault')
+    with store.connection() as db:
+        pending = db.execute("SELECT count(*) FROM requests WHERE kind='payment' AND (status IN ('waiting','saved','resumed') OR payment_payload IS NOT NULL)").fetchone()[0]
+        db.execute("UPDATE requests SET status='cancelled',payment_payload=NULL,payment_expires=NULL WHERE kind='payment' AND (status IN ('waiting','saved','resumed') OR payment_payload IS NOT NULL)")
+    result = {'success': True, 'provider': 'kernel', 'profiles_verified': len(homes),
+              'local_browsers_stopped': stopped, 'pending_payments_cancelled': pending,
+              'local_browser_wrappers': False, 'local_browser_fallback': False,
+              'automatic_card_submission': False, 'gateway_restarted': False,
+              'private_backup': str(backup), 'policy_sha256': settings['policy_sha256']}
+    write(backup / 'receipt.json', json.dumps(result, indent=2) + '\n')
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--home', type=Path, default=ROOT / '.local/hermes-lab/home',
+                        help='Protected gateway home; requires a fully stopped gateway.')
+    args = parser.parse_args()
+    os.umask(0o077)
+    try:
+        print(json.dumps(enable(args.home), indent=2))
+    except Exception:
+        parser.exit(1, 'Kernel-only activation failed. The gateway remains stopped; inspect private configuration and rerun acceptance. No credentials were printed.\n')
+
+
+if __name__ == '__main__':
+    main()

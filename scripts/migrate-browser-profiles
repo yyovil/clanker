@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Prepare and stage exact legacy adoption for the next QA-managed restart.
+
+plan reads local metadata only. apply stages the reviewed manifest; the live
+database changes only during guarded gateway bootstrap after fresh provider
+GET validation. This command never starts/stops a gateway or mutates Kernel.
+"""
+import argparse
+from contextlib import closing
+import json
+import os
+from pathlib import Path
+import sqlite3
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(ROOT / 'runtime'), str(ROOT / 'hermes')]
+from cloud_browser.profile_migration import manifest_digest, validate_manifest
+from vault.store import AccessError
+
+
+def plan(home, inventory):
+    source = json.loads(inventory.read_text())
+    candidates = []
+    database = home / '.clanker-vault' / 'requests.sqlite'
+    with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
+        db.row_factory = sqlite3.Row
+        for target in source['targets']:
+            if target['action'] != 'conditional_adoption':
+                continue
+            profile = next(row for row in source['legacy_profiles'] if row['id'] == target['candidate_profile_id'])
+            prior = next(row for row in profile['auth_flows'] if row['key'] == target['candidate_flow_key'])
+            row = db.execute('SELECT proxy_id FROM kernel_auth_flows WHERE key=?', (prior['key'],)).fetchone()
+            if row is None:
+                raise AccessError('A reviewed donor is absent from current local metadata.', 409)
+            from urllib.parse import urlsplit
+            host = urlsplit(target['preserved_origin']).hostname
+            domains = [host]
+            if host in {'docs.google.com', 'drive.google.com', 'sheets.google.com', 'slides.google.com', 'calendar.google.com', 'mail.google.com'}:
+                domains.append('accounts.google.com')
+            candidates.append(dict(team=target['team'], owner=target['owner'], principal_key=target['principal_key'],
+                profile_id=target['candidate_profile_id'], profile_name=target['candidate_profile_name'],
+                flow_key=target['candidate_flow_key'], connection_id=target['candidate_connection_id'],
+                account_handle=target['candidate_account_handle'], origin=target['preserved_origin'],
+                binding_sha256=prior['binding_sha256'], proxy_id=row['proxy_id'], allowed_domains=domains))
+    manifest = validate_manifest({'version': 1, 'team': source['team'], 'candidates': candidates})
+    return {'status': 'prepared_for_review', 'manifest': manifest, 'manifest_sha256': manifest_digest(manifest),
+        'fresh_provider_validation': 'required_at_gateway_bootstrap', 'provider_mutations': 0}
+
+
+def stage(home, manifest, reviewed):
+    validate_manifest(manifest)
+    if manifest_digest(manifest) != reviewed:
+        raise AccessError('The manifest changed after operator review.', 403)
+    path = home / '.clanker-cloud' / 'profile-adoption.json'
+    if path.parent.is_symlink() or path.is_symlink() or not path.parent.is_dir():
+        raise AccessError('The protected adoption destination is unavailable.', 403)
+    payload = {'manifest': manifest, 'reviewed_sha256': reviewed}
+    if path.exists():
+        if json.loads(path.read_text()) != payload or path.stat().st_mode & 0o077:
+            raise AccessError('A different or unprotected adoption manifest is already staged.', 409)
+    else:
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, 'w') as stream:
+            json.dump(payload, stream, indent=2)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+    return {'status': 'staged_pending_qa_restart', 'manifest_sha256': reviewed,
+        'database_mutations': 0, 'provider_mutations': 0}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--home', required=True, type=Path, help='Protected gateway home.')
+    actions = parser.add_subparsers(dest='action', required=True)
+    preview = actions.add_parser('plan', help='Build a reviewable manifest from the exact inventory proposal; no writes.')
+    preview.add_argument('--inventory-plan', required=True, type=Path)
+    apply = actions.add_parser('apply', help='Stage reviewed metadata for guarded bootstrap; does not live-apply or restart.')
+    apply.add_argument('--manifest', required=True, type=Path, help='JSON manifest, or plan output containing manifest.')
+    apply.add_argument('--reviewed-sha256', required=True, help='Exact SHA-256 shown by plan and reviewed by the operator.')
+    args = parser.parse_args()
+    try:
+        home = args.home.resolve(strict=True)
+        if args.action == 'plan':
+            result = plan(home, args.inventory_plan)
+        else:
+            value = json.loads(args.manifest.read_text())
+            result = stage(home, value.get('manifest', value), args.reviewed_sha256)
+        print(json.dumps(result, indent=2))
+        return 0
+    except (AccessError, OSError, ValueError, KeyError, StopIteration, sqlite3.Error):
+        print(json.dumps({'status': 'refused', 'error': 'Profile adoption metadata could not be verified. No provider operation was issued.'}))
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -1,0 +1,21 @@
+diff --git a/hermes/agent/gateway_context.py b/hermes/agent/gateway_context.py
+--- a/hermes/agent/gateway_context.py
++++ b/hermes/agent/gateway_context.py
+@@ -6,7 +6,7 @@
+ """
+ from contextlib import contextmanager
+ from contextvars import ContextVar
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from typing import Awaitable, Callable, Optional
+ 
+ 
+@@ -36,6 +36,8 @@
+     home: str
+     message_id: Optional[str] = None
+     conversation: tuple[tuple[str, str], ...] = ()
++    # Copied tool contexts share this turn's backend-owned handoff evidence.
++    handoff_context: dict = field(default_factory=dict, compare=False, repr=False)
+ 
+ 
+ _turn = ContextVar('hermes_gateway_turn', default=None)

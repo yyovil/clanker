@@ -1,0 +1,104 @@
+--- a/hermes/agent/auxiliary_client.py
++++ b/hermes/agent/auxiliary_client.py
+@@ -1028,13 +1028,13 @@
+     return pool if pool and pool.has_credentials() else None
+ 
+ 
+-def _select_pool_entry(provider: str) -> Tuple[bool, Optional[Any]]:
++def _select_pool_entry(provider: str, *, model: Optional[str] = None) -> Tuple[bool, Optional[Any]]:
+     """Return (pool_exists_for_provider, selected_entry)."""
+     pool = _load_pool_with_credentials(provider)
+     if pool is None:
+         return False, None
+     try:
+-        return True, pool.select()
++        return True, pool.select(model=model) if model else pool.select()
+     except Exception as exc:
+         logger.debug("Auxiliary client: could not select pool entry for %s: %s", provider, exc)
+         return True, None
+@@ -2103,9 +2103,9 @@
+     return _creds_pair(creds)
+ 
+ 
+-def _read_codex_access_token() -> Optional[str]:
++def _read_codex_access_token(model: Optional[str] = None) -> Optional[str]:
+     """Valid, non-expired Codex OAuth access token; an exhausted pool falls back to the profile's auth.json token."""
+-    pool_present, entry = _select_pool_entry("openai-codex")
++    pool_present, entry = _select_pool_entry("openai-codex", model=model)
+     if pool_present:
+         token = _pool_runtime_api_key(entry)
+         if token:
+@@ -2927,13 +2927,13 @@
+             "pass model explicitly (auxiliary.<task>.model in config.yaml)."
+         )
+         return None, None
+-    pool_present, entry = _select_pool_entry("openai-codex")
++    pool_present, entry = _select_pool_entry("openai-codex", model=model)
+     codex_token = _pool_runtime_api_key(entry) if pool_present else None
+     codex_override = _codex_base_url_override()
+     if codex_token:
+         base_url = codex_override or _pool_runtime_base_url(entry, _CODEX_AUX_BASE_URL) or _CODEX_AUX_BASE_URL
+     else:
+-        codex_token = _read_codex_access_token()
++        codex_token = _read_codex_access_token(model=model)
+         if not codex_token:
+             return None, None
+         base_url = codex_override or _CODEX_AUX_BASE_URL
+@@ -4976,7 +4976,7 @@
+     no_token_msg = "resolve_provider_client: openai-codex requested but no Codex OAuth token found (run: hermes model)"
+     if req.raw_codex:
+         # Raw OpenAI client for callers needing responses.stream() (main agent loop).
+-        codex_token = _read_codex_access_token()
++        codex_token = _read_codex_access_token(model=model)
+         if not codex_token:
+             logger.warning(no_token_msg)
+             return None, None
+--- a/hermes/tests/agent/test_auxiliary_client.py
++++ b/hermes/tests/agent/test_auxiliary_client.py
+@@ -764,7 +764,7 @@
+             def peek(self):
+                 return self.entry
+ 
+-            def select(self):
++            def select(self, *, model=None):
+                 return self.entry
+ 
+         pool = _Pool()
+@@ -1127,7 +1127,7 @@
+             def has_credentials(self):
+                 return True
+ 
+-            def select(self):
++            def select(self, *, model=None):
+                 return _Entry()
+ 
+         with (
+--- /dev/null
++++ b/hermes/tests/agent/test_auxiliary_codex_pool_model.py
+@@ -0,0 +1,26 @@
++"""A cooldown for one Codex model must not disable another auxiliary model."""
++
++import json
++import time
++
++import pytest
++
++from agent.auxiliary_client import _build_codex_client
++from gateway.run import _profile_runtime_scope
++
++
++@pytest.mark.parametrize("requested,available", [("allowed-model", True), ("limited-model", False)])
++def test_codex_aux_pool_uses_the_requested_model(tmp_path, requested, available):
++    (tmp_path / "auth.json").write_text(json.dumps({"version": 1, "providers": {},
++        "credential_pool": {"openai-codex": [{
++            "id": "test-oauth", "provider": "openai-codex", "label": "fixture",
++            "auth_type": "oauth", "source": "manual:device_code", "priority": 0,
++            "access_token": "fixture-token", "base_url": "http://127.0.0.1:1",
++            "model_cooldowns": {"limited-model": time.time() + 600},
++        }]}}))
++    with _profile_runtime_scope(tmp_path):
++        client, model = _build_codex_client(requested)
++        assert (client is not None) is available
++        if client is not None:
++            assert model == requested and client.api_key == "fixture-token"
++            client.close()

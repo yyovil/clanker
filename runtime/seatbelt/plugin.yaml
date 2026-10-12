@@ -1,0 +1,6 @@
+name: clanker-seatbelt
+version: 1.1.0
+description: Sandboxed browser and terminal with private hosted credential tools.
+kind: backend
+provides_terminal_environment_providers:
+  - clanker_seatbelt

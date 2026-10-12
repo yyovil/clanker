@@ -1,0 +1,655 @@
+diff --git a/hermes/gateway/slack_workspace.py b/hermes/gateway/slack_workspace.py
+--- a/hermes/gateway/slack_workspace.py
++++ b/hermes/gateway/slack_workspace.py
+@@ -397,6 +397,17 @@
+         conversation = self.state["conversations"].get(channel_id, {})
+         return member.get("status") == "ready" and conversation.get("enabled") is True and user_id in conversation.get("members", [])
+ 
++    async def prepare_event(self, event):
++        source = event.source
++        transport = getattr(source, '_transport_adapter_ref', None)
++        if (not callable(transport) or transport() is not self.adapter or source.is_bot or
++                source.platform.value!='slack' or source.scope_id!=self.team or
++                not self.authorize_sender(source.user_id,source.chat_id)):
++            return False
++        if self.vault_service is not None:
++            return await self.vault_service.channel_tasks.admit_event(event)
++        return True
++
+     def route(self, source):
+         from gateway.profile_routing import ProfileRouteRejected
+ 
+diff --git a/hermes/plugins/platforms/slack/adapter.py b/hermes/plugins/platforms/slack/adapter.py
+--- a/hermes/plugins/platforms/slack/adapter.py
++++ b/hermes/plugins/platforms/slack/adapter.py
+@@ -4693,6 +4693,9 @@
+             media_types=media_types, media_text_inlined=media_text_inlined, channel_context=channel_context)
+         if not self._message_edits.current(revision):
+             return
++        msg_event._slack_revision = revision
++        if policy is not None and not await policy.prepare_event(msg_event):
++            return
+         # React only when directly addressed; MPIMs are shared, so they need a
+         # mention like any channel.
+         ack_enabled = self._acknowledgement_reactions_enabled()
+diff --git a/runtime/slack_workspace.py b/runtime/slack_workspace.py
+--- a/runtime/slack_workspace.py
++++ b/runtime/slack_workspace.py
+@@ -397,6 +397,17 @@
+         conversation = self.state["conversations"].get(channel_id, {})
+         return member.get("status") == "ready" and conversation.get("enabled") is True and user_id in conversation.get("members", [])
+ 
++    async def prepare_event(self, event):
++        source = event.source
++        transport = getattr(source, '_transport_adapter_ref', None)
++        if (not callable(transport) or transport() is not self.adapter or source.is_bot or
++                source.platform.value!='slack' or source.scope_id!=self.team or
++                not self.authorize_sender(source.user_id,source.chat_id)):
++            return False
++        if self.vault_service is not None:
++            return await self.vault_service.channel_tasks.admit_event(event)
++        return True
++
+     def route(self, source):
+         from gateway.profile_routing import ProfileRouteRejected
+ 
+diff --git a/runtime/vault/channel_tasks.py b/runtime/vault/channel_tasks.py
+--- a/runtime/vault/channel_tasks.py
++++ b/runtime/vault/channel_tasks.py
+@@ -2,6 +2,7 @@
+ import asyncio
+ import json
+ from pathlib import Path
++from types import SimpleNamespace
+ from uuid import NAMESPACE_URL, uuid5
+ 
+ from .store import AccessError
+@@ -19,13 +20,56 @@
+     def home(self, row):
+         return self.service.policy.home / 'profiles' / ('task-' + row['id'])
+ 
++    @staticmethod
++    def event_key(event):
++        revision = getattr(event,'_slack_revision',None)
++        return str(event.message_id) + (':' + str(revision.version) if revision else '')
++
+     def request_context(self, turn):
++        row = self.store.channel_task(turn.source.to_dict())
++        goal = ('Existing channel task:\n' + row['task'] + '\n\n') if row else ''
+         if not turn.conversation:
+-            return turn.message
++            return goal + turn.message
+         conversation = [{'role': role, 'content': text} for role, text in turn.conversation]
+-        return ('Originating channel conversation (context only, not account authorization):\n' +
++        return (goal + 'Originating channel conversation (context only, not account authorization):\n' +
+                 json.dumps(conversation, ensure_ascii=False) +
+                 '\n\nLatest request or clarification answer:\n' + turn.message)
++
++    async def admit_event(self, event):
++        source = event.source
++        member = self.service.validate_member(source.scope_id,source.user_id)
++        private = source.chat_id==member['dm_id'] and source.chat_type=='dm'
++        row = self.store.linked_channel_task(source.to_dict(),private=private)
++        if row is None:return True
++        if private:
++            if row['task_state']=='cancelled':return False
++            await self.prepare(row)
++            if row['task_state']=='result_pending':
++                await self.deliver(row['id'])
++            if not self.store.begin_channel_reply(row['id'],self.event_key(event)):
++                return False
++            from agent.gateway_context import IsolatedGatewayTask
++            from gateway.session_identity import clear_identity
++            clear_identity(source)
++            source.profile = 'task-' + row['id']
++            source.isolated_task = IsolatedGatewayTask(row['id'],self.handle_response)
++            self.execution_route(source)
++            context = ('Continue this existing task, preserving confirmed choices and the stopping point. '
++                       'Authentication is a step, not completion of the requested task.\n' + row['task'])
++        else:
++            # Public status is coordinator metadata, never a private worker's
++            # messages, account observations, saved identifiers or code values.
++            context = 'Linked worker state: ' + row['task_state'] + '. A completed worker turn means its reply was delivered, not that a booking or purchase succeeded.'
++            if row['source']:
++                form = self.store.channel_form_status(json.loads(row['source']))
++                if form:
++                    kind,status = form
++                    label = 'verification' if kind=='code' else kind
++                    context += '\n' + label + ' form: ' + ('submitted' if status in ('saved','resumed') else status) + '.'
++                    context += ' Submitted means received by the backend; it does not prove website acceptance or a booking.'
++            context += ' Keep credentials and passenger/contact details in the linked private DM. Do not start another handoff for a status check.'
++        event.channel_context = '\n\n'.join(part for part in (event.channel_context,context) if part)
++        return True
+ 
+     def execution_route(self, source):
+         from agent.gateway_context import isolated_gateway_task
+@@ -43,7 +87,7 @@
+         return 'task-' + row['id']
+ 
+     def restore(self, source):
+-        """Only native resume code calls this; serialized ingress has no capability."""
++        """Restore a coordinator resume; native owner replies use admit_event."""
+         from agent.gateway_context import IsolatedGatewayTask
+         row = self.store.channel_task(source.to_dict())
+         if row is None:
+@@ -75,6 +119,9 @@
+ 
+     async def handle_response(self, event, response, runner):
+         source = event.source
++        revision = getattr(event,'_slack_revision',None)
++        if revision and not self.service.policy.adapter._message_edits.current(revision):
++            return
+         row = self.store.channel_task(source.to_dict())
+         if row is None or row['task_state'] in ('cancelled','completed'):
+             return
+@@ -82,14 +129,19 @@
+             self.execution_route(source)
+             # The trusted handler already sent the form to the owner's DM.
+             # A waiting model reply is not the channel task's final answer.
+-            if (self.store.channel_task_waiting(source.to_dict()) or
+-                    self.store.channel_task_requested_access(source.to_dict(),event.message_id)):
++            waiting = self.store.channel_task_waiting(source.to_dict())
++            human_reply = source.message_id==event.message_id
++            if (self.store.channel_task_requested_access(source.to_dict(),event.message_id) or
++                    waiting and not human_reply):
+                 return
+             if not response.strip():
+                 raise AccessError('The account task did not produce a result.',409)
+             # Capture before optional vault reads and Slack I/O. A failed
+             # redaction or publication must retry the answer, never the work.
+-            self.store.save_channel_result(row['id'],response)
++            event_key = self.event_key(event)
++            queued_reply = bool(row['last_inbound_id'] and row['last_inbound_id']!=event_key)
++            self.store.save_channel_result(row['id'],response,event_id=event_key,
++                                           private=waiting and human_reply,continuing=waiting or queued_reply)
+         await self.deliver(row['id'])
+ 
+     async def deliver(self, task_id):
+@@ -99,6 +151,7 @@
+             if row is None:
+                 return
+             original = await self.validate_destination(row)
++            target = json.loads(row['source']) if row['result_private'] else original.to_dict()
+             edits = getattr(self.service.policy.adapter, '_message_edits', None)
+             revision = edits.lookup((original.scope_id, original.chat_id, original.user_id,
+                                      original.message_id)) if edits and original.message_id else None
+@@ -108,12 +161,13 @@
+                     and revision.digest != request_digest):
+                 return  # an edit was admitted while this result was waiting for publication
+             client = self.service.policy.client()
+-            client_id = str(uuid5(NAMESPACE_URL,'clanker-channel-result:' + task_id))
++            client_id = str(uuid5(NAMESPACE_URL,'clanker-channel-result:' + task_id +
++                                 (':' + row['result_event_id'] if row['result_event_id'] else '')))
+             # Recover a Slack ACK lost before the SQLite completion commit.
+             cursor = None
+             posted = None
+             while True:
+-                args = {'channel':original.chat_id,'ts':original.thread_id,'limit':100}
++                args = {'channel':target['chat_id'],'ts':target['thread_id'],'limit':100}
+                 if cursor:args['cursor']=cursor
+                 history = await client.conversations_replies(**args)
+                 posted = next((m for m in history.get('messages',[]) if m.get('client_msg_id')==client_id),None)
+@@ -131,22 +185,27 @@
+                 text = self.store.code_crypto().decrypt(row['result_payload']).decode()
+                 from agent.vault_store import scrub_secret_from_text
+                 from agent.redact import redact_registered_vault_values, redact_sensitive_text
+-                for item in self.service.delegations.items(row['team'],row['owner']):
+-                    access = self.service.delegations.lookup(row['team'],row['owner'],item['id'])
+-                    text = scrub_secret_from_text(text,access.secret())
+-                text = redact_registered_vault_values(redact_sensitive_text(text,force=True))
++                from gateway.run import _profile_runtime_scope
++                # Outbox recovery runs outside the turn. Rebuild this owner's
++                # contact scrubbing under the worker scope before publication.
++                with _profile_runtime_scope(self.home(row)):
++                    self.service.personal.register_redactions(SimpleNamespace(source=original))
++                    for item in self.service.delegations.items(row['team'],row['owner']):
++                        access = self.service.delegations.lookup(row['team'],row['owner'],item['id'])
++                        text = scrub_secret_from_text(text,access.secret())
++                    text = redact_registered_vault_values(redact_sensitive_text(text,force=True))
+                 if revision and not edits.current(revision):
+                     return
+-                if revision and revision.reply.ids:
++                if revision and revision.reply.ids and row['result_message_ts'] is None and not row['result_private']:
+                     result = await edits.update_reply(self.service.policy.adapter, revision, text,
+                         {'slack_team_id':original.scope_id,'thread_id':original.thread_id})
+                     if not result.success:
+                         raise AccessError('The updated channel result remains pending.', 409)
+                     posted = {'ts':result.message_id}
+                 else:
+-                    posted = await client.chat_postMessage(channel=original.chat_id,thread_ts=original.thread_id,
++                    posted = await client.chat_postMessage(channel=target['chat_id'],thread_ts=target['thread_id'],
+                         text=text,client_msg_id=client_id,unfurl_links=False,unfurl_media=False)
+-                    if revision:
++                    if revision and row['result_message_ts'] is None and not row['result_private']:
+                         revision.reply.ids.append(posted['ts'])
+                         await edits.save(revision)
+             self.store.mark_channel_result(task_id,posted['ts'])
+diff --git a/runtime/vault/payments.py b/runtime/vault/payments.py
+--- a/runtime/vault/payments.py
++++ b/runtime/vault/payments.py
+@@ -146,7 +146,7 @@
+                 raise AccessError('Choose an owned or invited card on this checkout origin.',403)
+         row=self.store.create(team=turn.source.scope_id,owner=turn.source.user_id,
+             home=self.service.private_home(turn.source.scope_id,turn.source.user_id),task_id=turn.task_id,
+-            source=turn.source.to_dict(),task=turn.message,kind='payment',label='Payment card',
++            source=turn.source.to_dict(),task=self.service.channel_tasks.request_context(turn),kind='payment',label='Payment card',
+             origin=checkout['origin'],handle=handle or None,checkout={'order':order,'snapshot':checkout,'nonce':nonce},
+             grant_id=access.grant_id if access else None,approver=access.owner if access and access.grant_id else None,
+             gateway_event_id=turn.message_id)
+diff --git a/runtime/vault/personal.py b/runtime/vault/personal.py
+--- a/runtime/vault/personal.py
++++ b/runtime/vault/personal.py
+@@ -182,7 +182,10 @@
+         for kind in KINDS:
+             values = store.values(kind) or {}
+             for key, value in values.items():
+-                if key != 'country_code':register_vault_redaction_value(value)
++                # Geographic names also occur in public routes and brands.
++                # Street/unit/postal details remain protected independently.
++                if key not in ('country_code','city','state','country'):
++                    register_vault_redaction_value(value)
+             if kind == 'phone' and values:
+                 number = values['phone_number']
+                 register_vault_redaction_value(number.lstrip('+'))
+@@ -239,7 +242,9 @@
+                                    phone_context=context.get('result') if context.get('ok') else None)
+             from agent.redact import register_vault_redaction_value
+             self.register_redactions(turn)
+-            for fill in fills:register_vault_redaction_value(fill['value'])
++            for fill in fills:
++                if fill['token'] not in ('address-level2','address-level1','country-name'):
++                    register_vault_redaction_value(fill['value'])
+             script = build_fill_js(fills, expected_origin=origin, nonce=nonce).replace(
+                 'HTMLInputElement.prototype', "(el.tagName==='TEXTAREA'?HTMLTextAreaElement:HTMLInputElement).prototype")
+             result = native._eval_js_secret(turn.task_id, script)
+diff --git a/runtime/vault/service.py b/runtime/vault/service.py
+--- a/runtime/vault/service.py
++++ b/runtime/vault/service.py
+@@ -258,12 +258,27 @@
+         if not original['thread_id']:
+             raise AccessError('The originating Slack message is unavailable.',409)
+         home=self.private_home(turn.source.scope_id,turn.source.user_id)
+-        row=self.store.transfer(team=turn.source.scope_id,owner=turn.source.user_id,home=home,
+-            task_id=turn.task_id,source=original,task=self.channel_tasks.request_context(turn),reply_mode='channel')
++        row=self.store.linked_channel_task(original,active_only=True)
++        if row is not None and (not row['source'] or not self.store.channel_form_status(json.loads(row['source']))):
++            row=None
++        if row is None:
++            row=self.store.transfer(team=turn.source.scope_id,owner=turn.source.user_id,home=home,
++                task_id=turn.task_id,source=original,task=self.channel_tasks.request_context(turn),reply_mode='channel')
+         await self.deliver_transfer(row)
+         await self.drain()
+-        return {'status':'moved_to_private','private_results':False,
+-                'next':'Account access is handled privately. This task will continue automatically and reply in this thread. End this turn.'}
++        with self.store.connection() as db:
++            current = dict(db.execute('SELECT * FROM transfers WHERE id=?',(row['id'],)).fetchone())
++        result = {'status':'moved_to_private','private_results':False,
++                  'next':'The linked private task is already available. Continue there for missing details; saved access resumes this same task automatically. Return the private_thread_url so the requester can open it. End this turn.'}
++        get_link = getattr(self.policy.client(),'chat_getPermalink',None)
++        if get_link is not None and current['source']:
++            destination=json.loads(current['source'])
++            try:
++                link=await get_link(channel=destination['chat_id'],message_ts=destination['thread_id'])
++                if link.get('permalink'):result['private_thread_url']=link['permalink']
++            except Exception:
++                result['private_thread_link_unavailable']=True
++        return result
+ 
+     async def deliver_transfer(self, row):
+         from gateway.session import SessionSource
+@@ -300,7 +315,7 @@
+             if login_method != 'auto':raise AccessError('API key requests do not use a login method.')
+             request=self.store.create(team=turn.source.scope_id,owner=turn.source.user_id,
+                 home=self.private_home(turn.source.scope_id,turn.source.user_id),
+-                task_id=turn.task_id,source=turn.source.to_dict(),task=turn.message,
++                task_id=turn.task_id,source=turn.source.to_dict(),task=self.channel_tasks.request_context(turn),
+                 kind=kind,label=label,origin=origin,identifier=identifier,gateway_event_id=turn.message_id)
+             await self.deliver_link(request)
+             return {'status':'waiting_for_owner','request_id':request['id'],
+@@ -362,7 +377,7 @@
+                             'next': 'Use clanker_vault_fill for this saved login, then request the website SMS and use clanker_vault_enter_code. A fresh SMS code is required.'}
+         request = self.store.create(team=turn.source.scope_id,owner=turn.source.user_id,
+                                     home=self.private_home(turn.source.scope_id,turn.source.user_id),
+-                                    task_id=turn.task_id,source=turn.source.to_dict(),task=turn.message,
++                                    task_id=turn.task_id,source=turn.source.to_dict(),task=self.channel_tasks.request_context(turn),
+                                     kind='login',label=label,origin=origin,
+                                     identifier=identifier.strip()[:320],login_method=login_method,
+                                     gateway_event_id=turn.message_id)
+@@ -400,7 +415,7 @@
+         home=self.private_home(turn.source.scope_id,turn.source.user_id)
+         access = access or self.delegations.resolve(turn, meta.id)
+         row=self.store.create(team=turn.source.scope_id,owner=turn.source.user_id,home=home,task_id=turn.task_id,
+-            source=turn.source.to_dict(),task=turn.message,kind='code',label=meta.label+' verification',
++            source=turn.source.to_dict(),task=self.channel_tasks.request_context(turn),kind='code',label=meta.label+' verification',
+             origin=meta.origin,identifier='' if meta.login_method=='sms' else meta.identifier or '',handle=access.handle,
+             login_method=meta.login_method,
+             grant_id=access.grant_id,approver=access.owner if access.grant_id else None,
+@@ -429,6 +444,9 @@
+         channel_task = self.channel_tasks.restore(source)
+         finish=self.store.mark_transfer_resumed if transfer else self.store.mark_resumed
+         if channel_task:
++            if channel_task['task_state']=='result_pending' and channel_task['result_return_state']=='active':
++                await self.channel_tasks.deliver(channel_task['id'])
++                channel_task=self.store.channel_task(source.to_dict())
+             if channel_task['task_state'] in ('completed','result_pending','cancelled'):
+                 finish(row['id'])
+                 return
+@@ -446,7 +464,7 @@
+                  "The backend returns your final requested result to the original channel thread. "
+                  "Login and code forms are delivered privately. Do not include credentials or access links in the result."
+                  if channel_task else "Continue the requester's private account task. Keep account observations and results in this DM.") if transfer else
+-                f"{'Verification code submitted; use clanker_vault_enter_code' if row['kind']=='code' else 'Access saved'} for {row['label']} ({row['origin']}). Credential handle: {row['handle']}. Continue the original task below, verifying the result before reporting completion.")
++                f"{'Verification code submitted; use clanker_vault_enter_code' if row['kind']=='code' else 'Access saved'} for {row['label']} ({row['origin']}). Credential handle: {row['handle']}. Authentication is only a step in the original task below. After checking it, continue the selected task from its stopping point. Preserve confirmed route, dates, passengers, selections and price decisions. Ask only for missing details; login success alone is not task completion.")
+         if not transfer and row['kind']=='payment':
+             prefix=f"The owner approved purchase request {row['id']}. Use clanker_pay with this request_id in the existing local checkout. This approval is single use and expires quickly. Verify the merchant receipt before reporting paid; never automatically retry an unknown outcome."
+         event_id=('clanker-private-resume-' if transfer else 'clanker-access-resume-')+row['id']
+@@ -474,6 +492,8 @@
+                 return
+         if await asyncio.to_thread(self.delivery_owned,key,event_id):
+             finish(row['id']);return
++        if channel_task and not self.store.begin_channel_reply(channel_task['id'],event_id):
++            finish(row['id']);return
+         await adapter.handle_message(event)
+         if not getattr(event,'_gateway_accepted',False):
+             return
+@@ -483,7 +503,8 @@
+         await asyncio.shield(task)
+         if channel_task and hasattr(event,'_isolated_response'):
+             current = self.store.channel_task(source.to_dict())
+-            if current['task_state']=='active' and not self.store.channel_task_waiting(source.to_dict()):
++            if (current['task_state']=='active' and current['result_event_id']!=event_id and
++                    not self.store.channel_task_waiting(source.to_dict())):
+                 # Adopt the native completed reply before retrying any work.
+                 return
+         finish(row['id'])
+diff --git a/runtime/vault/store.py b/runtime/vault/store.py
+--- a/runtime/vault/store.py
++++ b/runtime/vault/store.py
+@@ -87,7 +87,9 @@
+             columns = {row[1] for row in db.execute('PRAGMA table_info(transfers)')}
+             for name, kind in [('reply_mode', "TEXT NOT NULL DEFAULT 'private'"),
+                                ('task_state', 'TEXT'), ('result_payload', 'BLOB'),
+-                               ('result_message_ts', 'TEXT')]:
++                               ('result_message_ts', 'TEXT'), ('result_event_id', 'TEXT'),
++                               ('last_inbound_id', 'TEXT'), ('result_private', 'INTEGER NOT NULL DEFAULT 0'),
++                               ('result_return_state', "TEXT NOT NULL DEFAULT 'completed'")]:
+                 if name not in columns:db.execute(f'ALTER TABLE transfers ADD COLUMN {name} {kind}')
+         os.chmod(self.path, 0o600)
+ 
+@@ -359,6 +361,44 @@
+             return [dict(row) for row in db.execute(
+                 "SELECT * FROM transfers WHERE reply_mode='channel' AND task_state='result_pending'")]
+ 
++    def linked_channel_task(self, source, *, private=False, active_only=False):
++        with self.connection() as db:
++            rows = db.execute("SELECT * FROM transfers WHERE team=? AND owner=? AND reply_mode='channel' "
++                              "ORDER BY created DESC,rowid DESC", (source['scope_id'],source['user_id'])).fetchall()
++        for row in rows:
++            if active_only and row['task_state'] not in ('active','result_pending'):
++                continue
++            saved = row['source'] if private else row['original_source']
++            if not saved:continue
++            expected = json.loads(saved)
++            if all(source.get(key)==expected.get(key) for key in ('platform','scope_id','user_id','chat_id','thread_id')):
++                return dict(row)
++
++    def begin_channel_reply(self, task_id, event_id):
++        with self.connection() as db:
++            db.execute('BEGIN IMMEDIATE')
++            row = db.execute('SELECT * FROM transfers WHERE id=?', (task_id,)).fetchone()
++            if (not row or row['task_state'] not in ('active','completed') or
++                    row['result_event_id']==event_id):
++                return False
++            db.execute("UPDATE transfers SET task_state='active',last_inbound_id=? WHERE id=?",
++                       (event_id,task_id))
++            return True
++
++    def channel_form_status(self, source):
++        with self.connection() as db:
++            rows = db.execute('SELECT source,kind,status,expires FROM requests WHERE team=? AND owner=? '
++                              'ORDER BY created DESC,rowid DESC', (source['scope_id'],source['user_id'])).fetchall()
++        for row in rows:
++            if self.same_task_source(source,json.loads(row['source'])):
++                status = 'expired' if row['expires']<=self.clock() and row['status']=='waiting' else row['status']
++                return row['kind'],status
++
++    @staticmethod
++    def same_task_source(left, right):
++        return all(left.get(key)==right.get(key) for key in
++                   ('platform','scope_id','user_id','chat_id','thread_id','profile'))
++
+     def channel_tasks_for_control(self, team, owner, source=None, message_id=None):
+         with self.connection() as db:
+             rows = [dict(row) for row in db.execute(
+@@ -373,22 +413,23 @@
+                        item.get('thread_id')==source['thread_id']) for item in candidates)
+         return [row for row in rows if matches(row)]
+ 
+-    def save_channel_result(self, task_id, text):
++    def save_channel_result(self, task_id, text, *, event_id=None, private=False, continuing=False):
+         payload = self.code_crypto().encrypt(text.encode())
+         with self.connection() as db:
+-            db.execute("UPDATE transfers SET result_payload=?,task_state='result_pending' "
+-                       "WHERE id=? AND reply_mode='channel' AND task_state='active'", (payload,task_id))
++            db.execute("UPDATE transfers SET result_payload=?,task_state='result_pending',result_event_id=?,"
++                       "result_private=?,result_return_state=? WHERE id=? AND reply_mode='channel' AND task_state='active'",
++                       (payload,event_id,int(private),'active' if continuing else 'completed',task_id))
+ 
+     def mark_channel_result(self, task_id, message_ts):
+         with self.connection() as db:
+-            db.execute("UPDATE transfers SET task_state='completed',result_message_ts=?,status='resumed' "
++            db.execute("UPDATE transfers SET task_state=result_return_state,result_message_ts=?,status='resumed' "
+                        "WHERE id=? AND task_state='result_pending'", (message_ts,task_id))
+ 
+     def channel_task_waiting(self, source):
+         with self.connection() as db:
+             rows = db.execute("SELECT source FROM requests WHERE team=? AND owner=? AND status='waiting' AND expires>?",
+                               (source['scope_id'],source['user_id'],self.clock())).fetchall()
+-        return any(json.loads(row['source'])==source for row in rows)
++        return any(self.same_task_source(json.loads(row['source']),source) for row in rows)
+ 
+     def channel_task_requested_access(self, source, event_id):
+         """A turn that created a form cannot become a final result after save."""
+@@ -396,7 +437,7 @@
+         with self.connection() as db:
+             rows = db.execute('SELECT source FROM requests WHERE team=? AND owner=? AND gateway_event_id=?',
+                               (source['scope_id'],source['user_id'],str(event_id))).fetchall()
+-        return any(json.loads(row['source'])==source for row in rows)
++        return any(self.same_task_source(json.loads(row['source']),source) for row in rows)
+ 
+     def cancel_owner(self, team, owner):
+         """Disconnect cancels outstanding account work before removing its credentials."""
+diff --git a/verification/probes/test_clanker_payments.py b/verification/probes/test_clanker_payments.py
+--- a/verification/probes/test_clanker_payments.py
++++ b/verification/probes/test_clanker_payments.py
+@@ -128,7 +128,9 @@
+         with pytest.raises(AccessError,match='cannot be replayed'):service.payments.execute(turn,rid)
+     else:
+         result=service.payments.execute(turn,rid);assert result['status']=='submitted'
+-        assert CARD['card_number'] not in json.dumps(result) and '731' not in json.dumps(result)
++        assert result['request_id']==rid
++        visible = json.dumps({key:value for key,value in result.items() if key!='request_id'})
++        assert CARD['card_number'] not in visible and '731' not in visible
+     with pytest.raises(AccessError):service.payments.execute(turn,rid)
+     assert supervisor.calls==2
+ 
+diff --git a/verification/probes/test_clanker_personal_info.py b/verification/probes/test_clanker_personal_info.py
+--- a/verification/probes/test_clanker_personal_info.py
++++ b/verification/probes/test_clanker_personal_info.py
+@@ -16,6 +16,23 @@
+ PHONE={'phone_number':'+91 98765 43210','country_code':'+91'}
+ 
+ 
++def test_personal_redaction_preserves_public_geography_without_exposing_contacts(service):
++    from agent.redact import clear_vault_redaction_values, redact_registered_vault_values
++    from gateway.run import _profile_runtime_scope
++    from public_web.tools import clean_text
++    query = 'Nagpur to Mumbai flight on Air India, 9 October'
++    for owner in ('UA', 'UB', 'UA'):
++        private = service.private_home('TT', owner)
++        PersonalStore(private).save('address', ADDRESS | {'city': 'Nagpur'})
++        PersonalStore(private).save('phone', PHONE)
++        PersonalStore(private).save('email', {'email': 'private@example.invalid'})
++        with _profile_runtime_scope(private):
++            clear_vault_redaction_values()
++            service.personal.register_redactions(turn(service, owner))
++            assert clean_text(query) == query
++            scrubbed = redact_registered_vault_values('42 Example Street, Flat 4, private@example.invalid, +919876543210, 9876543210')
++            assert all(value not in scrubbed for value in ('42 Example Street', 'Flat 4', 'private@example.invalid', '9876543210'))
++            clear_vault_redaction_values()
+ 
+ 
+ @pytest.mark.asyncio
+diff --git a/verification/probes/test_clanker_task_continuation.py b/verification/probes/test_clanker_task_continuation.py
+new file mode 100644
+--- /dev/null
++++ b/verification/probes/test_clanker_task_continuation.py
+@@ -0,0 +1,148 @@
++"""Real Slack intake and durable task routing; transport and model are fixtures."""
++import asyncio
++import json
++from types import SimpleNamespace
++from unittest.mock import AsyncMock
++
++import pytest
++
++from test_clanker_channel_tasks import workspace, provision, channel_turn, settle, worker_turn
++from agent.gateway_context import isolated_gateway_task
++from agent.vault_store import VaultStore
++from gateway.config import Platform, PlatformConfig
++from gateway.run import GatewayRunner
++from gateway.session import build_session_key
++from plugins.platforms.slack.adapter import SlackAdapter
++from vault.service import VaultService
++
++
++def native_intake(workspace):
++    adapter = SlackAdapter(PlatformConfig(enabled=True, token='xoxb-fixture',
++        typing_indicator=False, extra={'reactions': False}))
++    runner = object.__new__(GatewayRunner)
++    runner.config = SimpleNamespace(multiplex_profiles=True, profile_routes=[])
++    runner._served_profile_homes = workspace.runner._served_profile_homes
++    runner.adapters = {Platform.SLACK: adapter}
++    adapter.gateway_runner = runner
++    adapter._team_clients = {'TT': workspace.client}
++    adapter._team_bot_user_ids = {'TT': 'UBOT'}
++    adapter._bot_user_id = 'UBOT'
++    adapter._workspace_membership = workspace.policy
++    adapter._resolve_user_name = AsyncMock(return_value='Fixture member')
++    adapter._resolve_channel_name = AsyncMock(return_value='Fixture conversation')
++    adapter._hydrate_thread_context = AsyncMock(return_value=(None, [], []))
++    adapter._set_assistant_thread_title = AsyncMock()
++    workspace.client.conversations_info.side_effect = lambda channel: {'channel':
++        {'is_im': True, 'user': channel[1:]} if channel.startswith('D') else {'is_member': True}}
++    captured = []
++    async def dispatch(a, event, revision, **kwargs):
++        a._canonicalize(event.source)
++        assert workspace.policy.authorize_source(event.source)
++        captured.append(event)
++    adapter._message_edits.dispatch = dispatch
++    workspace.policy.adapter = adapter
++    return adapter, captured
++
++
++async def intake(workspace, adapter, owner, chat, thread, ts, text):
++    workspace.client.conversations_info.return_value = {'channel':
++        {'is_im': True, 'user': owner} if chat.startswith('D') else {'is_member': True}}
++    await adapter._handle_slack_message({'type': 'message', 'user': owner,
++        'channel': chat, 'channel_type': 'im' if chat.startswith('D') else 'channel',
++        'team': 'TT', 'ts': ts, 'thread_ts': thread, 'text': text,
++        'client_msg_id': 'human-' + ts})
++
++
++@pytest.mark.asyncio
++async def test_native_dm_replies_keep_flight_worker_after_restart_and_deliver_each_turn(workspace):
++    await provision(workspace)
++    selected = 'Nagpur to Mumbai on 9 October, one adult, AI-2584 at 10:10 PM, accepted INR 6540.'
++    events = []
++    for index, owner in enumerate(('UA', 'UB', 'UA')):
++        turn = channel_turn(workspace, owner=owner, task='yeah', thread='200.' + str(index),
++                            message_id='300.' + str(index))
++        turn.conversation = (('user', selected), ('assistant', 'Continue the selected booking privately.'))
++        await workspace.service.move_private(turn)
++        await settle(workspace.service)
++        initial = workspace.events[-1]
++        await workspace.service.channel_tasks.handle_response(initial, 'Signed in; passenger details are still needed.', workspace.runner)
++        events.append(initial)
++    restored = VaultService(workspace.policy, workspace.service.config)
++    workspace.policy.vault_service = restored
++    workspace.service = restored
++    adapter, captured = native_intake(workspace)
++    for index, initial in enumerate(events):
++        owner = initial.source.user_id
++        before = len(captured)
++        await intake(workspace, adapter, owner, initial.source.chat_id, initial.source.thread_id,
++                     '400.' + str(index), 'go further now')
++        assert len(captured) == before + 1
++        reply = captured[-1]
++        assert reply.source.profile == initial.source.profile
++        assert isolated_gateway_task(reply.source).task_id == isolated_gateway_task(initial.source).task_id
++        assert build_session_key(reply.source, profile=reply.source.profile) == build_session_key(initial.source, profile=initial.source.profile)
++        assert selected in reply.channel_context and 'go further now' == reply.text
++        await intake(workspace, adapter, owner, initial.source.chat_id, initial.source.thread_id,
++                     '401.' + str(index), 'keep that selected flight')
++        queued = captured[-1]
++        result = 'The selected flight is ready for passenger details, task ' + str(index)
++        await restored.channel_tasks.handle_response(reply, result, adapter.gateway_runner)
++        assert restored.store.channel_task(queued.source.to_dict())['task_state']=='active'
++        await restored.channel_tasks.handle_response(queued, 'Selected flight retained.', adapter.gateway_runner)
++        posted = [m for m in workspace.messages if m['channel'] == 'CSHARED' and m.get('thread_ts') == '200.' + str(index)]
++        assert [m['text'] for m in posted] == ['Signed in; passenger details are still needed.', result, 'Selected flight retained.']
++        assert len({m['client_msg_id'] for m in posted}) == 3
++        # A duplicate intake after another restart cannot reopen a delivered turn.
++        restored = VaultService(workspace.policy, restored.config)
++        workspace.policy.vault_service = restored
++        workspace.service = restored
++        adapter, captured = native_intake(workspace)
++        await intake(workspace, adapter, owner, initial.source.chat_id, initial.source.thread_id,
++                     '401.' + str(index), 'keep that selected flight')
++        assert captured == []
++    # Another owner cannot adopt the private worker by quoting its DM thread.
++    await intake(workspace, adapter, 'UB', 'DUB', events[0].source.thread_id, '500.1', 'continue')
++    assert captured[-1].source.profile == workspace.policy.state['members']['UB']['profile']
++    assert isolated_gateway_task(captured[-1].source) is None
++
++
++@pytest.mark.asyncio
++async def test_code_waiting_reply_and_public_status_share_one_task_without_false_delivery(workspace):
++    await provision(workspace)
++    workspace.client.chat_getPermalink = AsyncMock(side_effect=lambda channel,message_ts:
++        {'permalink':'https://slack.invalid/archives/' + channel + '/p' + message_ts.replace('.','')})
++    turn = channel_turn(workspace, task='Continue selected AI-2584 flight', message_id='200.2')
++    moved = await workspace.service.move_private(turn)
++    assert moved['private_thread_url'].startswith('https://slack.invalid/archives/DUA/')
++    await settle(workspace.service)
++    initial = workspace.events[-1]
++    owner_home = workspace.service.private_home('TT', 'UA')
++    meta = VaultStore(owner_home / 'vault').add_item('login', 'Fixture flights',
++        {'identifier': 'fixture@example.invalid', 'identifier_type': 'email', 'password': 'DUMMY_FLIGHT_PASSWORD'},
++        origin='https://flights.invalid')
++    form = await workspace.service.request_code(worker_turn(workspace, initial), meta)
++    adapter, captured = native_intake(workspace)
++    await intake(workspace, adapter, 'UA', 'DUA', initial.source.thread_id, '600.1', 'we good now?')
++    reply = captured[-1]
++    assert reply.source.profile == initial.source.profile
++    await workspace.service.channel_tasks.handle_response(reply, 'Your verification form is still waiting.', adapter.gateway_runner)
++    assert workspace.messages[-1]['channel'] == 'DUA'
++    assert workspace.messages[-1]['thread_ts'] == initial.source.thread_id
++    assert workspace.service.store.channel_task(reply.source.to_dict())['task_state'] == 'active'
++    assert not any(m['channel'] == 'CSHARED' for m in workspace.messages)
++    await intake(workspace, adapter, 'UA', 'CSHARED', '200.1', '600.2', '<@UBOT> sent the code')
++    public = captured[-1]
++    assert isolated_gateway_task(public.source) is None
++    assert 'verification form: waiting' in public.channel_context
++    workspace.client.conversations_info.return_value = {'channel': {'is_member': True}}
++    again = await workspace.service.move_private(channel_turn(workspace, task='sent the code', message_id='600.2'))
++    assert again['private_thread_url']==moved['private_thread_url']
++    await settle(workspace.service)
++    with workspace.service.store.connection() as db:
++        assert db.execute('SELECT count(*) FROM transfers').fetchone()[0] == 1
++    workspace.service.save_code(form['request_id'], workspace.service.store.token(form['request_id']),
++                               {'team': 'TT', 'owner': 'UA'}, {'code': '731924'})
++    # Submitted is a backend fact, never a claim that the merchant accepted it.
++    await intake(workspace, adapter, 'UA', 'CSHARED', '200.1', '600.3', '<@UBOT> code submitted')
++    assert 'verification form: submitted' in captured[-1].channel_context
++    assert '731924' not in captured[-1].channel_context
