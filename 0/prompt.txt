@@ -1,0 +1,1 @@
+what kind of authentication would be required for accessing team vault though? think about multi-tenancy as well
