@@ -1,0 +1,1 @@
+yeah so I'd rather provide a prompt so that they can use it to setup/start the project in one go.
