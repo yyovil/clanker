@@ -1,0 +1,1 @@
+did you also improved the followups for those initial user messages that you are gonna pass asa the prompt?
