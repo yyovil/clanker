@@ -1,0 +1,7 @@
+# Response annotations:
+Each item contains text selected from an earlier Codex response and may include a user comment. Treat items as Annotation 1, Annotation 2, and so on in array order. Use every selection as context and address every comment. For every annotation you address, include its inline directive `:codex-annotation{index="N"}`, where N is its one-based array position (for example, `:codex-annotation{index="1"}`). Do not use unstructured annotation labels.
+<response-annotations>
+[{"text":"Renewal still depends on retry wording. A request like “check my mailbox” can encounter expired access and still hit the retry gate instead of receiving a fresh sign-in link.","annotation":"why is that so?","source":{"messageId":"msg_0b3866f2273d2f77016ac9fd449208819181282383e5d1e19f","startOffset":321,"endOffset":495}}]
+</response-annotations>
+
+## My request:
