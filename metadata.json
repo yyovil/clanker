@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 212,
+  "checkpoints_count": 213,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -39,6 +39,7 @@
     "docs/decisions/2026-10-08-vault-first-personal-details.md",
     "docs/decisions/2026-10-09-owned-login-session-reuse.md",
     "docs/decisions/2026-10-09-signin-reply-ownership.md",
+    "docs/decisions/2026-10-09-vault-slack-session-and-auth-recovery.md",
     "hermes/.coderabbit.yaml",
     "hermes/.dockerignore",
     "hermes/.env.example",
@@ -15151,6 +15152,7 @@
     "runtime/clanker_policy.py",
     "runtime/cloud_browser/__init__.py",
     "runtime/cloud_browser/kernel.py",
+    "runtime/cloud_browser/kernel_auth_client.py",
     "runtime/cloud_browser/kernel_client.py",
     "runtime/cloud_browser/kernel_diagnostics.py",
     "runtime/cloud_browser/service.py",
@@ -15572,6 +15574,13 @@
       "compact_transcript": "/53/transcript.jsonl",
       "content_hash": "/53/content_hash.txt",
       "prompt": "/53/prompt.txt"
+    },
+    {
+      "metadata": "/54/metadata.json",
+      "transcript": "/54/full.jsonl",
+      "compact_transcript": "/54/transcript.jsonl",
+      "content_hash": "/54/content_hash.txt",
+      "prompt": "/54/prompt.txt"
     }
   ],
   "token_usage": {
