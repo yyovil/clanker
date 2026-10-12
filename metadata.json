@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 215,
+  "checkpoints_count": 236,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -38,6 +38,7 @@
     "docs/decisions/2026-10-08-task-ownership.md",
     "docs/decisions/2026-10-08-user-scoped-slack-recall.md",
     "docs/decisions/2026-10-08-vault-first-personal-details.md",
+    "docs/decisions/2026-10-09-generic-recovery-owner-retry.md",
     "docs/decisions/2026-10-09-owned-login-session-reuse.md",
     "docs/decisions/2026-10-09-signin-reply-ownership.md",
     "docs/decisions/2026-10-09-vault-slack-session-and-auth-recovery.md",
@@ -15192,6 +15193,7 @@
     "runtime/vault/tools.py",
     "runtime/vault/vault.css",
     "runtime/vault/vault.js",
+    "runtime/vault/verification_retry.py",
     "runtime/vault/web.py",
     "scripts/apply-hermes-mods",
     "scripts/configure-clanker-discovery",
@@ -15596,6 +15598,13 @@
       "compact_transcript": "/56/transcript.jsonl",
       "content_hash": "/56/content_hash.txt",
       "prompt": "/56/prompt.txt"
+    },
+    {
+      "metadata": "/57/metadata.json",
+      "transcript": "/57/full.jsonl",
+      "compact_transcript": "/57/transcript.jsonl",
+      "content_hash": "/57/content_hash.txt",
+      "prompt": "/57/prompt.txt"
     }
   ],
   "token_usage": {
