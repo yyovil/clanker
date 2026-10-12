@@ -1,0 +1,11 @@
+# Selected text:
+
+## Selection 1: /Users/tanishqpalandurkar/Projects/yyot/README.md (lines 7-11)
+Clanker works from Slack using requester-owned Kernel browsers, hosted sign-in
+and a private Kernel vault. **Payments are currently a limitation of this POC:**
+successful end-to-end Indian card payments have not been verified. See the
+[payment limitations](docs/ACCESS_MANAGEMENT.md) for the current card and
+checkout constraints.
+
+## My request:
+just mention that clanker is basically a browser agent that lives in your slack to get your digital work done. that's should be suffice.
