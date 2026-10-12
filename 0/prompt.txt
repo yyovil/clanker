@@ -1,0 +1,6 @@
+```chat_selection
+agent_id: b683417d-558f-46d1-b36f-3a959c63ff91
+selected_text:
+The agent can't start a fresh verification or login attempt on its own; the owner has to ask for it in their own message.
+```
+ why though? if I ask him to retry in other language then it will def fail. If agent's intelligence is powered by LLMs and they are def capable of making tool calls, why can't it just mk a tool call where the prev login attempt in the remote browser is cancelled by closing the tab simply or just making a refresh and refilling the credentials to retry? this is more generalized way. isn't it?
