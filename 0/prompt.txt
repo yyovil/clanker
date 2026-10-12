@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_754ee2bddcb64e40a79cdad56993468f\",0]","question":"Scoped recall is implemented and verified. Clanker currently has one active task. When should I restart the gateway to activate it? Your standing preference requires approval for live changes.","answer":"Restart once the current task finishes (Recommended)"}]
+</send_user_message_question_reply>
