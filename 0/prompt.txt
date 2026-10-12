@@ -1,0 +1,9 @@
+<cursor_commands>
+
+--- Cursor Command: code-review ---
+Review the relevant code with a code review mindset. Prioritize bugs, behavioral regressions, security issues, and missing tests. Findings must be the primary focus, ordered by severity. Do not make code changes unless the user explicitly asks for them.
+--- End Command ---
+</cursor_commands>
+<timestamp>Saturday, Oct 10, 2026, 2:56 PM (UTC+5:30)</timestamp>
+
+I want you to /code-review the changes we have made in hermes -> clanker for the purpose of this take home assignment
