@@ -1,0 +1,33 @@
+[$slack-debug](/Users/tanishqpalandurkar/.codex/skills/slack-debug/SKILL.md) yyovil [https://clanker-global.slack.com/archives/D0C6F49F2KD/p1791572441387969](https://clanker-global.slack.com/archives/D0C6F49F2KD/p1791572441387969) what does live browser check is unavailable means?
+
+---
+
+what's the reason for that check to not get completed within 15s?
+
+---
+
+what it was inspecting the browser for btw?
+
+---
+
+is there a tool defined for that in the kernel plugin we installed for clanker which is nothing but hermes?
+
+---
+
+so the 15s time out is put there by the guys who built the kernel plugin for hermes?
+
+---
+
+are we timing out for 15s everywhere? or just this endpoint
+
+---
+
+so how do we determine to put a timeout in such cases? like whats the standard procedure?
+
+---
+
+can we measure this from our kernel log history and findout what should be the optimal timeout value then
+
+---
+
+so that was one time error. right?
