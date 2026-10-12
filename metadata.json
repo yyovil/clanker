@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 137,
+  "checkpoints_count": 139,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -25,6 +25,7 @@
     "docs/decisions/2026-10-06-slack-task-acknowledgement.md",
     "docs/decisions/2026-10-06-vault-invitations.md",
     "docs/decisions/2026-10-07-proactive-task-recovery.md",
+    "docs/decisions/2026-10-08-task-context-handoff.md",
     "hermes/.coderabbit.yaml",
     "hermes/.dockerignore",
     "hermes/.env.example",
@@ -15124,6 +15125,7 @@
     "patches/hermes/slack-typing-lifecycle.patch",
     "patches/hermes/slack-unfurl-admission-race.patch",
     "patches/hermes/slack-workspace-membership.patch",
+    "patches/hermes/task-context-handoff.patch",
     "runtime/clanker_policy.py",
     "runtime/cloud_browser/__init__.py",
     "runtime/cloud_browser/service.py",
@@ -15405,6 +15407,13 @@
       "compact_transcript": "/34/transcript.jsonl",
       "content_hash": "/34/content_hash.txt",
       "prompt": "/34/prompt.txt"
+    },
+    {
+      "metadata": "/35/metadata.json",
+      "transcript": "/35/full.jsonl",
+      "compact_transcript": "/35/transcript.jsonl",
+      "content_hash": "/35/content_hash.txt",
+      "prompt": "/35/prompt.txt"
     }
   ],
   "token_usage": {
