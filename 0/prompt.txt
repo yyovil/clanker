@@ -1,0 +1,1 @@
+if we run the browser outside of the sandbox, this risk will be eliminated or what?
