@@ -1,0 +1,1 @@
+does clanker responds to edited message? basically what I want is clanker stops responding to the older message and only respond to the edited message.
