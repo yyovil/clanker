@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_eMccaQqKz6IXusg2mGDURKdP\",0]","question":"GitHub needs yyovil’s sign-in. Open the secure sign-in card in this Slack thread and complete login/authenticator privately: https://clanker-global.slack.com/archives/D0C6F49F2KD/p1791658186338419 . The card was issued at 00:20 IST and may expire around 00:30. Don’t send credentials or codes here.","answer":"Done, continue"}]
+</send_user_message_question_reply>
