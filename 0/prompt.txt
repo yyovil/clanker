@@ -1,0 +1,1 @@
+put the lettermark in [README.md](README.md) first of all, then leave space for the 1st demo. then lets prepare a table where we will demo the creds thingy, live browser preview for showing off our taste and UX and vault invite feature.
