@@ -1,0 +1,1 @@
+bro tell them about the deps first of all like what do you need to have on your system to run clanker. so we need python and shit for this. like that so confirm if that's present, otherwise install it
