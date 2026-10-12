@@ -1,0 +1,1 @@
+I want clanker to have the concise personality with all its users by default. also I don't want the first time tips and shit randomly in the chat because in the assignment its explicitly mentioned that users shouldn't have to think about the technical details to use clanker. users just have to give the tasks in the english (natural language) and clankers completes them for them
