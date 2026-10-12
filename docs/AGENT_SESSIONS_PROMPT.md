@@ -1,9 +1,10 @@
 # Agent sessions prompt
 
-Clanker was built with coding agents, and their sessions from 4–12 October 2026
-were recorded with [Entire](https://docs.entire.io/overview). The 108 checkpoints are
-published in this repository as Git refs under `refs/entire/checkpoints/`. Each one
-holds the prompts, agent responses, tool calls and files behind a change.
+Clanker was built with Codex and Cursor, and their sessions in this repository are
+recorded with [Entire](https://docs.entire.io/overview). About 1,400 checkpoints
+covering 211 sessions are published in this repository as Git refs under
+`refs/entire/checkpoints/`. They hold the prompts, agent responses, tool calls and
+files behind the work.
 
 Reading them needs only Git and the Entire CLI. No Entire account, login or
 `entire enable` is required.
@@ -22,20 +23,22 @@ as Git refs under refs/entire/checkpoints/ in that repository.
    `irm https://entire.io/install.ps1 | iex`. Set ENTIRE_NO_AUTO_UPDATE=1.
 
 2. Fetch the checkpoints into a fresh directory. The source checkout is not needed
-   to read sessions, and the download is about 200 MB:
+   to read sessions, and the download is about 260 MB:
      git init clanker-sessions && cd clanker-sessions
      git remote add origin https://github.com/yyovil/clanker.git
      git fetch origin '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'
    If the full repository is already cloned, run the same fetch inside it instead.
 
 3. Build an index. List checkpoint IDs with
-     git for-each-ref --sort=committerdate \
-       --format='%(committerdate:short) %(refname:lstrip=-1)' refs/entire/checkpoints
+     git for-each-ref --format='%(refname:lstrip=-1)' refs/entire/checkpoints
    `entire checkpoint list` only shows checkpoints linked to the current branch,
-   so do not rely on it. For each ID run `entire checkpoint explain <id> --json`
-   for metadata (date, files touched, tokens) and `entire checkpoint explain <id>
-   --short` for intent. Check `entire agent-help checkpoint explain` for the exact
-   flags of the installed version.
+   so do not rely on it. Most checkpoints were imported after the fact, one per
+   turn, so Git commit dates are not when the work happened. Run
+   `entire checkpoint explain <id> --short` for each ID to get its session ID,
+   creation time and intent, then group checkpoints by session and order sessions
+   by creation time. Some sessions appear twice, once captured live and once
+   imported; treat them as one. Check `entire agent-help checkpoint explain` for
+   the exact flags of the installed version.
 
 4. Give me a short orientation: how many sessions, which days, which agents and
    models, and the main threads of work by area (Slack gateway, Kernel browser
