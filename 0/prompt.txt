@@ -1,0 +1,1 @@
+remembering the task is gonna be inmemory or persistent using sqlite?
