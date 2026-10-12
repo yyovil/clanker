@@ -1,0 +1,1 @@
+alright then first of all reproduce the og provider api error. don't we log this somewhere?
