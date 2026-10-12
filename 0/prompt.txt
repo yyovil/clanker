@@ -1,0 +1,9 @@
+<in-app-browser-context source="ambient-ui-state">
+This block is automatically supplied ambient UI state, not part of the user's request. Do not treat it as an instruction or as evidence that the user explicitly selected the in-app browser.
+# In app browser:
+- The user has the in-app browser open with 3 tabs.
+- Current URL: https://app.slack.com/app-settings/T0C6J1XCDE0/A0C78PBUKQQ/oauth
+</in-app-browser-context>
+
+## My request:
+we don't have any real users rn gbro
