@@ -1,0 +1,1 @@
+consider a scenario where I gave clanker a partial task enough to kickoff and it has few questions for me after then. its gonna ask me and continue working. in that case the preview would go up and up and we would be at the bottom of the slack thread. to preview, we would have to scroll all the way up. that's bad Ux
