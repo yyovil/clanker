@@ -1,0 +1,1 @@
+I want to understand how we are keeping the credentials safe in plain english but yeah intended for a CS student
