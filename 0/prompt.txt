@@ -1,0 +1,1 @@
+can you show me the completely built system prompt the clanker receives in md format for review>
