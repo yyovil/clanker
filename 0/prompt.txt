@@ -1,0 +1,1 @@
+so clanker-global.slack.app is the workspace that contains clanker agent slack app and I want to run this loop for this clanker agent slack app
