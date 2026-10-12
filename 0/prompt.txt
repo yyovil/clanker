@@ -1,0 +1,1 @@
+I don't want to copy the prompt repeatedly. create a skill that contains 2 profiles identified using the username: yyovil | tanishq and the slack thread to take as the context to debug followed the by the issue
