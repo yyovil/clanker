@@ -1,0 +1,1 @@
+restart and check if the vault pages are also up after a restart? also let me know if the vault page links (powered by cf tunnels) are affected by gateway restarted or not?
