@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"REDACTED\",0]","question":"Slack says the current browser identity isn’t a collaborator on Clanker’s app. Can you sign into the app-owner Slack account in the browser? I need that access to register the replacement vault callback before the password form can work.","answer":"Open the owner sign-in page for me"}]
+</send_user_message_question_reply>
