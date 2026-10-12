@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4R39H3D36PV3TJEC9PFJ13C",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 131,
+  "checkpoints_count": 132,
   "files_touched": [
     ".gitignore",
     "README.md",
@@ -15124,9 +15124,14 @@
     "patches/hermes/slack-typing-lifecycle.patch",
     "patches/hermes/slack-unfurl-admission-race.patch",
     "patches/hermes/slack-workspace-membership.patch",
+    "runtime/clanker_policy.py",
     "runtime/cloud_browser/__init__.py",
     "runtime/cloud_browser/service.py",
     "runtime/cloud_browser/tools.py",
+    "runtime/public_web/__init__.py",
+    "runtime/public_web/client.py",
+    "runtime/public_web/rollout.py",
+    "runtime/public_web/tools.py",
     "runtime/seatbelt/__init__.py",
     "runtime/seatbelt/common.sb",
     "runtime/seatbelt/context.py",
@@ -15154,6 +15159,7 @@
     "runtime/vault/vault.js",
     "runtime/vault/web.py",
     "scripts/apply-hermes-mods",
+    "scripts/configure-clanker-discovery",
     "scripts/configure-clanker-style",
     "scripts/configure-clanker-vault",
     "scripts/enable-clanker-browser",
@@ -15384,6 +15390,10 @@
       "compact_transcript": "/31/transcript.jsonl",
       "content_hash": "/31/content_hash.txt",
       "prompt": "/31/prompt.txt"
+    },
+    {
+      "metadata": "/32/metadata.json",
+      "prompt": ""
     }
   ],
   "token_usage": {
