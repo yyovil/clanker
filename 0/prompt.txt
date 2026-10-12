@@ -1,0 +1,10 @@
+[Image]
+<image_files>
+The following images were provided by the user and saved to disk for future use:
+1. /Users/tanishqpalandurkar/.cursor/projects/Users-tanishqpalandurkar-Projects-yyot/assets/image-4ae95542-0434-4ba5-b038-301abc887533.png
+
+These files can be read with tools, copied to other locations, or attached to subagents using the file_attachments parameter.
+</image_files>
+<timestamp>Sunday, Oct 4, 2026, 1:40 AM (UTC+5:30)</timestamp>
+
+that's how vault does it btw
