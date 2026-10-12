@@ -1,0 +1,1 @@
+I want to know what creds we could handle right now securely using vault?
