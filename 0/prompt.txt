@@ -1,0 +1,3 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_bbf6cac149ed41ba819fcd3ef51f539b\",0]","question":"Which of Clanker’s options should I select for the demo? We’ll stop at checkout.","answer":"10:10–11:55 pm, ₹6,277"}]
+</send_user_message_question_reply>
