@@ -1,0 +1,1 @@
+I need you to use the kernel cli and read the logs to understand if we really need the headful or headless kernel browser here
